@@ -16,8 +16,8 @@ namespace rio_prototype.Interop
         private const int WSA_FLAG_REGISTERED_IO = 0x100;
 
         private static bool s_init;
-        private static RIOSend s_rioSend;
-        private static RIOReceive s_rioReceive;
+        private static RIOSendEx s_rioSendEx;
+        private static RIOReceiveEx s_rioReceiveEx;
         private static RIODequeueCompletion s_rioDequeueCompletion;
         private static RIONotify s_rioNotify;
         private static RIORegisterBuffer s_rioRegisterBuffer;
@@ -125,17 +125,17 @@ namespace rio_prototype.Interop
             return res;
         }
 
-        public static SocketError Send(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Send(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-            return s_rioSend(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioSendEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, IntPtr.Zero, IntPtr.Zero, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static SocketError Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, IntPtr controlContext, IntPtr flagsOut, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
 
-            return s_rioReceive(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioReceiveEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, controlContext, flagsOut, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
         public static SafeSocketHandle CreateRegisterableSocket(int af, int type, int protocol)
@@ -179,8 +179,8 @@ namespace rio_prototype.Interop
                 s_rioCreateRequestQueue = Marshal.GetDelegateForFunctionPointer<RIOCreateRequestQueue>(table.RIOCreateRequestQueue);
                 s_rioResizeRequestQueue = Marshal.GetDelegateForFunctionPointer<RIOResizeRequestQueue>(table.RIOResizeRequestQueue);
                 s_rioDequeueCompletion = Marshal.GetDelegateForFunctionPointer<RIODequeueCompletion>(table.RIODequeueCompletion);
-                s_rioSend = Marshal.GetDelegateForFunctionPointer<RIOSend>(table.RIOSend);
-                s_rioReceive = Marshal.GetDelegateForFunctionPointer<RIOReceive>(table.RIOReceive);
+                s_rioSendEx = Marshal.GetDelegateForFunctionPointer<RIOSendEx>(table.RIOSendEx);
+                s_rioReceiveEx = Marshal.GetDelegateForFunctionPointer<RIOReceiveEx>(table.RIOReceiveEx);
                 Volatile.Write(ref s_init, true);
             }
         }
@@ -253,9 +253,9 @@ namespace rio_prototype.Interop
         private delegate bool RIOResizeRequestQueue(SafeRioRequestQueueHandle RQ, uint MaxOutstandingReceive, uint MaxOutstandingSend);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
-        private delegate bool RIOSend(SafeRioRequestQueueHandle SocketQueue, IntPtr pData, int DataBufferCount, uint Flags, IntPtr RequestContext);
+        private delegate bool RIOSendEx(SafeRioRequestQueueHandle SocketQueue, IntPtr pData, int DataBufferCount, IntPtr pLocalAddress, IntPtr pRemoteAddress, IntPtr pControlContext, IntPtr pFlags, uint Flags, IntPtr RequestContext);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
-        private delegate bool RIOReceive(SafeRioRequestQueueHandle SocketQueue, IntPtr pData, int DataBufferCount, uint Flags, IntPtr RequestContext);
+        private delegate bool RIOReceiveEx(SafeRioRequestQueueHandle SocketQueue, IntPtr pData, int DataBufferCount, IntPtr pLocalAddress, IntPtr pRemoteAddress, IntPtr pControlContext, IntPtr pFlags, uint Flags, IntPtr RequestContext);
     }
 }

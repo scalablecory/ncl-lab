@@ -4,7 +4,7 @@ using System.Numerics;
 namespace rio_prototype
 {
     /// <summary>
-    /// A pool for registered memory.
+    /// A thread-safe pool for registered memory.
     /// </summary>
     public sealed class RegisteredMemoryPool : MemoryPool<byte>
     {

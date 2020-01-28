@@ -36,6 +36,7 @@ namespace rio_prototype
                 {
                     Console.WriteLine($"{clientId}: sending...");
 
+                    var operationContext = new RegisteredOperationContext();
                     using IMemoryOwner<byte> sendBufferOwner = bufferPool.Rent(128);
                     Memory<byte> sendBuffer = sendBufferOwner.Memory;
 
@@ -44,7 +45,7 @@ namespace rio_prototype
 
                     while (sendBuffer.Length != 0)
                     {
-                        int bytesSent = await registeredSocket.SendAsync(sendBuffer).ConfigureAwait(false);
+                        int bytesSent = await registeredSocket.SendAsync(sendBuffer, operationContext).ConfigureAwait(false);
 
                         Console.WriteLine($"{clientId}: sent {bytesSent:N0} bytes.");
 
@@ -64,12 +65,13 @@ namespace rio_prototype
                 {
                     Console.WriteLine($"{clientId}: receiving...");
 
+                    var operationContext = new RegisteredOperationContext();
                     using IMemoryOwner<byte> recvBufferOwner = bufferPool.Rent(4096);
                     Memory<byte> recvBuffer = recvBufferOwner.Memory;
 
                     while (true)
                     {
-                        int bytesReceived = await registeredSocket.ReceiveAsync(recvBuffer).ConfigureAwait(false);
+                        int bytesReceived = await registeredSocket.ReceiveAsync(recvBuffer, operationContext).ConfigureAwait(false);
 
                         Console.WriteLine($"{clientId}: received {bytesReceived:N0} bytes.");
 

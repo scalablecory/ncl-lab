@@ -75,7 +75,7 @@ namespace rio_prototype
                 for (int i = 0; i < dequeued; ++i)
                 {
                     ref Interop.Rio.RIORESULT result = ref results[i];
-                    RegisteredOperationEventArgs.Complete(result.Status, result.BytesTransferred, new IntPtr(result.RequestContext));
+                    RegisteredOperationContext.Complete(result.Status, result.BytesTransferred, new IntPtr(result.RequestContext));
                 }
             }
             while (dequeued != 0);

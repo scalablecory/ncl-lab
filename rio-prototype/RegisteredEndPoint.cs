@@ -28,6 +28,8 @@ namespace rio_prototype
             }
         }
 
+        internal Memory<byte> Memory => _memoryOwner.Memory;
+
         public RegisteredEndPoint(MemoryPool<byte> memoryPool)
         {
             if (memoryPool == null) throw new ArgumentNullException(nameof(memoryPool));

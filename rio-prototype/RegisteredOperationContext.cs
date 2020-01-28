@@ -11,16 +11,11 @@ using System.Threading.Tasks.Sources;
 namespace rio_prototype
 {
     /// <summary>
-    /// Async operation state, cached to provide allocationless I/O.
+    /// Async operation state. Can be cached to provide allocationless I/O.
     /// </summary>
-    internal unsafe sealed class RegisteredOperationEventArgs : IValueTaskSource<int>
+    public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>
     {
         private static Func<Socket, ThreadPoolBoundHandle> s_GetOrAllocateThreadPoolBoundHandle;
-
-        /// <summary>
-        /// The next node in a lock-free list of cached event args.
-        /// </summary>
-        internal RegisteredOperationEventArgs Next;
 
         private RegisteredSocket _socket;
         private Interop.Rio.RIO_BUF[] _buffers = new Interop.Rio.RIO_BUF[1];
@@ -28,19 +23,19 @@ namespace rio_prototype
         private ManualResetValueTaskSourceCore<int> _valueTaskSource;
         private GCHandle _buffersHandle;
 
-        // Used only to pin this eventargs; RIO does not use overlapped here.
+        // Used only to pin this context; RIO does not use overlapped here.
         private ThreadPoolBoundHandle _boundHandle;
-        private readonly StrongBox<RegisteredOperationEventArgs> _thisRef = new StrongBox<RegisteredOperationEventArgs>();
+        private readonly StrongBox<RegisteredOperationContext> _thisRef = new StrongBox<RegisteredOperationContext>();
         private readonly PreAllocatedOverlapped _preallocatedOverlapped;
         private NativeOverlapped* _overlapped;
 
-        public RegisteredOperationEventArgs()
+        internal RegisteredOperationContext()
         {
             _preallocatedOverlapped = new PreAllocatedOverlapped(delegate { }, _thisRef, null);
             _valueTaskSource.RunContinuationsAsynchronously = true;
         }
 
-        public (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlyMemory<byte> buffer)
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlyMemory<byte> buffer)
         {
             if (_overlapped != null) throw new InvalidOperationException();
 
@@ -48,7 +43,17 @@ namespace rio_prototype
             return Prepare(socket);
         }
 
-        public (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<ReadOnlyMemory<byte>> buffers)
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr, IntPtr remoteEndPointPtr) Prepare(RegisteredSocket socket, ReadOnlyMemory<byte> buffer, RegisteredEndPoint remoteEndPoint)
+        {
+            if (_overlapped != null) throw new InvalidOperationException();
+
+            SetBuffers(buffer, remoteEndPoint);
+            (ValueTask<int> task, IntPtr thisPtr, IntPtr buffersPtr) = Prepare(socket);
+            IntPtr remoteEndPointPtr = IntPtr.Add(_buffersHandle.AddrOfPinnedObject(), sizeof(Interop.Rio.RIO_BUF));
+            return (task, thisPtr, buffersPtr, remoteEndPointPtr);
+        }
+
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<ReadOnlyMemory<byte>> buffers)
         {
             if (_overlapped != null) throw new InvalidOperationException();
 
@@ -56,12 +61,32 @@ namespace rio_prototype
             return Prepare(socket);
         }
 
-        public (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<Memory<byte>> buffers)
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr, IntPtr remoteEndPointPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<ReadOnlyMemory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
+        {
+            if (_overlapped != null) throw new InvalidOperationException();
+
+            SetBuffers(buffers);
+            (ValueTask<int> task, IntPtr thisPtr, IntPtr buffersPtr) = Prepare(socket);
+            IntPtr remoteEndPointPtr = IntPtr.Add(_buffersHandle.AddrOfPinnedObject(), sizeof(Interop.Rio.RIO_BUF) * buffers.Length);
+            return (task, thisPtr, buffersPtr, remoteEndPointPtr);
+        }
+
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<Memory<byte>> buffers)
         {
             if (_overlapped != null) throw new InvalidOperationException();
 
             SetBuffers(buffers);
             return Prepare(socket);
+        }
+
+        internal (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr, IntPtr remoteEndPointPtr) Prepare(RegisteredSocket socket, ReadOnlySpan<Memory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
+        {
+            if (_overlapped != null) throw new InvalidOperationException();
+
+            SetBuffers(buffers);
+            (ValueTask<int> task, IntPtr thisPtr, IntPtr buffersPtr) = Prepare(socket);
+            IntPtr remoteEndPointPtr = IntPtr.Add(_buffersHandle.AddrOfPinnedObject(), sizeof(Interop.Rio.RIO_BUF) * buffers.Length);
+            return (task, thisPtr, buffersPtr, remoteEndPointPtr);
         }
 
         private (ValueTask<int>, IntPtr thisPtr, IntPtr buffersPtr) Prepare(RegisteredSocket socket)
@@ -83,6 +108,13 @@ namespace rio_prototype
             SetBuffer(0, buffer);
         }
 
+        private void SetBuffers(ReadOnlyMemory<byte> buffer, RegisteredEndPoint remoteEndPoint)
+        {
+            EnsureBuffersCount(2);
+            SetBuffer(0, buffer);
+            SetBuffer(1, remoteEndPoint.Memory);
+        }
+
         private void SetBuffers(ReadOnlySpan<Memory<byte>> buffers)
         {
             EnsureBuffersCount(buffers.Length);
@@ -92,6 +124,16 @@ namespace rio_prototype
             }
         }
 
+        private void SetBuffers(ReadOnlySpan<Memory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
+        {
+            EnsureBuffersCount(buffers.Length + 1);
+            for (int i = 0; i < buffers.Length; ++i)
+            {
+                SetBuffer(i, buffers[i]);
+            }
+            SetBuffer(buffers.Length, remoteEndPoint.Memory);
+        }
+
         private void SetBuffers(ReadOnlySpan<ReadOnlyMemory<byte>> buffers)
         {
             EnsureBuffersCount(buffers.Length);
@@ -99,6 +141,16 @@ namespace rio_prototype
             {
                 SetBuffer(i, buffers[i]);
             }
+        }
+
+        private void SetBuffers(ReadOnlySpan<ReadOnlyMemory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
+        {
+            EnsureBuffersCount(buffers.Length + 1);
+            for (int i = 0; i < buffers.Length; ++i)
+            {
+                SetBuffer(i, buffers[i]);
+            }
+            SetBuffer(buffers.Length, remoteEndPoint.Memory);
         }
 
         private void EnsureBuffersCount(int bufferCount)
@@ -123,7 +175,7 @@ namespace rio_prototype
             _rioBuffers[idx] = manager;
         }
 
-        public void Complete(Exception exception, int transferred)
+        internal void Complete(Exception exception, int transferred)
         {
             Debug.Assert(_overlapped != null);
 
@@ -144,14 +196,12 @@ namespace rio_prototype
             {
                 _valueTaskSource.SetException(exception);
             }
-
-            socket.ReturnCachedEventArgs(this);
         }
 
-        public static unsafe void Complete(int errorCode, int transferred, IntPtr thisPtr)
+        internal static unsafe void Complete(int errorCode, int transferred, IntPtr thisPtr)
         {
             var nativeOverlapped = (NativeOverlapped*)thisPtr.ToPointer();
-            var box = (StrongBox<RegisteredOperationEventArgs>)ThreadPoolBoundHandle.GetNativeOverlappedState(nativeOverlapped);
+            var box = (StrongBox<RegisteredOperationContext>)ThreadPoolBoundHandle.GetNativeOverlappedState(nativeOverlapped);
 
             box.Value.Complete(errorCode == 0 ? null : new SocketException(errorCode), transferred);
         }
