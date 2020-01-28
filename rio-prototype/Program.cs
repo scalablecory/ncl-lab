@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Buffers;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace rio_prototype
@@ -11,48 +13,73 @@ namespace rio_prototype
     {
         static async Task Main(string[] args)
         {
-            using Socket socket = RegisteredSocket.CreateRegisterableSocket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            await socket.ConnectAsync(new DnsEndPoint("microsoft.com", 80));
-            Console.WriteLine($"Connected: {socket.LocalEndPoint} -> {socket.RemoteEndPoint}");
-
             using var bufferPool = new RegisteredMemoryPool();
-            using var multiplexer = new RegisteredMultiplexer(queueSize: 10);
-            using var registeredSocket = new RegisteredSocket(multiplexer, socket);
+            using var multiplexer = new RegisteredMultiplexer();
+            int clientIds = 0;
 
-            await Task.WhenAll(DoSend(), DoReceive()).ConfigureAwait(false);
+            await Task.WhenAll(RunOneClient(), RunOneClient(), RunOneClient(), RunOneClient(), RunOneClient()).ConfigureAwait(false);
 
-            async Task DoSend()
+            async Task RunOneClient()
             {
-                Memory<byte> sendBuffer = bufferPool.Rent(64).Memory;
-                int bytes = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: microsoft.com\r\n\r\n", sendBuffer.Span);
-                sendBuffer = sendBuffer.Slice(bytes);
+                int clientId = Interlocked.Increment(ref clientIds);
 
-                while (sendBuffer.Length != 0)
+                using Socket socket = RegisteredSocket.CreateRegisterableSocket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                using var registeredSocket = new RegisteredSocket(multiplexer, socket);
+
+                await socket.ConnectAsync(new DnsEndPoint("microsoft.com", 80));
+                Console.WriteLine($"{clientId}: connected ({socket.LocalEndPoint} -> {socket.RemoteEndPoint}).");
+
+                await Task.WhenAll(DoSend(), DoReceive()).ConfigureAwait(false);
+                Console.WriteLine($"{clientId}: done.");
+
+                async Task DoSend()
                 {
-                    int bytesSent = await registeredSocket.SendAsync(sendBuffer).ConfigureAwait(false);
+                    Console.WriteLine($"{clientId}: sending...");
 
-                    if (bytesSent == 0)
+                    using IMemoryOwner<byte> sendBufferOwner = bufferPool.Rent(128);
+                    Memory<byte> sendBuffer = sendBufferOwner.Memory;
+
+                    int bytes = Encoding.ASCII.GetBytes("GET / HTTP/1.1\r\nHost: microsoft.com\r\nConnection: close\r\n\r\n", sendBuffer.Span);
+                    sendBuffer = sendBuffer.Slice(0, bytes);
+
+                    while (sendBuffer.Length != 0)
                     {
-                        break;
+                        int bytesSent = await registeredSocket.SendAsync(sendBuffer).ConfigureAwait(false);
+
+                        Console.WriteLine($"{clientId}: sent {bytesSent:N0} bytes.");
+
+                        if (bytesSent == 0)
+                        {
+                            break;
+                        }
+
+                        sendBuffer = sendBuffer.Slice(bytesSent);
                     }
 
-                    sendBuffer = sendBuffer.Slice(bytesSent);
+                    Console.WriteLine($"{clientId}: done sending.");
+                    socket.Shutdown(SocketShutdown.Send);
                 }
-            }
 
-            async Task DoReceive()
-            {
-                Memory<byte> recvBuffer = bufferPool.Rent(4096).Memory;
-                while (true)
+                async Task DoReceive()
                 {
-                    int bytesReceived = await registeredSocket.ReceiveAsync(recvBuffer).ConfigureAwait(false);
+                    Console.WriteLine($"{clientId}: receiving...");
 
-                    if (bytesReceived == 0)
+                    using IMemoryOwner<byte> recvBufferOwner = bufferPool.Rent(4096);
+                    Memory<byte> recvBuffer = recvBufferOwner.Memory;
+
+                    while (true)
                     {
-                        break;
+                        int bytesReceived = await registeredSocket.ReceiveAsync(recvBuffer).ConfigureAwait(false);
+
+                        Console.WriteLine($"{clientId}: received {bytesReceived:N0} bytes.");
+
+                        if (bytesReceived == 0)
+                        {
+                            break;
+                        }
                     }
 
-                    Console.WriteLine(Encoding.ASCII.GetString(recvBuffer.Span.Slice(bytesReceived)));
+                    Console.WriteLine($"{clientId}: done receiving.");
                 }
             }
         }

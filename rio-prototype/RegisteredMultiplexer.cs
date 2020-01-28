@@ -1,25 +1,27 @@
 ﻿using System;
+using System.Net.Sockets;
 using System.Threading;
 
 namespace rio_prototype
 {
+    /// <summary>
+    /// A multiplexer for registered sockets.
+    /// </summary>
     public sealed class RegisteredMultiplexer : IDisposable
     {
-        private readonly AutoResetEvent _waitHandle;
+        private readonly EventWaitHandle _waitHandle;
         private readonly RegisteredWaitHandle _registeredWaitHandle;
         private readonly Interop.SafeRioCompletionQueueHandle _completionQueue;
+        private uint _currentQueueSize = 4;
 
-        internal Interop.SafeRioCompletionQueueHandle SafeHandle => _completionQueue;
-
-        public RegisteredMultiplexer(uint queueSize)
+        public RegisteredMultiplexer()
         {
             Interop.Rio.Init();
 
-            _waitHandle = new AutoResetEvent(false);
-            _completionQueue = Interop.Rio.CreateCompletionQueue(queueSize, _waitHandle.SafeWaitHandle);
+            _waitHandle = new AutoResetEvent(initialState: false);
+            _completionQueue = Interop.Rio.CreateCompletionQueue(_currentQueueSize, _waitHandle.SafeWaitHandle);
             _registeredWaitHandle = ThreadPool.UnsafeRegisterWaitForSingleObject(_waitHandle,
-                (state, timedOut) => ((RegisteredMultiplexer)state).OnNotify(), this, -1, false);
-
+                (state, timedOut) => ((RegisteredMultiplexer)state).OnNotify(), this, millisecondsTimeOutInterval: -1, executeOnlyOnce: false);
             Notify();
         }
 
@@ -28,6 +30,26 @@ namespace rio_prototype
             _registeredWaitHandle.Unregister(_waitHandle);
             _completionQueue.Dispose();
             _waitHandle.Dispose();
+        }
+
+        internal Interop.SafeRioRequestQueueHandle RegisterSocket(SafeSocketHandle socketHandle)
+        {
+            lock (_completionQueue)
+            {
+                while (true)
+                {
+                    try
+                    {
+                        return Interop.Rio.CreateRequestQueue(socketHandle, _completionQueue, IntPtr.Zero, 1, 1, 1, 1);
+                    }
+                    catch (SocketException ex) when (ex.SocketErrorCode == SocketError.NoBufferSpaceAvailable)
+                    {
+                        uint newQueueSize = _currentQueueSize * 2;
+                        Interop.Rio.ResizeCompletionQueue(_completionQueue, newQueueSize);
+                        _currentQueueSize = newQueueSize;
+                    }
+                }
+            }
         }
 
         private void Notify()
@@ -49,8 +71,6 @@ namespace rio_prototype
                 {
                     dequeued = Interop.Rio.DequeueCompletions(_completionQueue, results);
                 }
-
-                Console.WriteLine($"Dequeued {dequeued} notifications.");
 
                 for (int i = 0; i < dequeued; ++i)
                 {

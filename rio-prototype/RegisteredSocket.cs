@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Net.Sockets;
 using System.Reflection;
@@ -7,21 +8,26 @@ using System.Threading.Tasks;
 
 namespace rio_prototype
 {
+    /// <summary>
+    /// A registered socket.
+    /// </summary>
     sealed class RegisteredSocket : IDisposable
     {
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
         internal readonly Socket _socket;
         private readonly Interop.SafeRioRequestQueueHandle _requestQueue;
-        internal RegisteredOperationEventArgs _cachedSendArgs, _cachedRecvArgs;
+        internal RegisteredOperationEventArgs _cachedArgs;
+        private uint _currentSendQueueSize = 1, _currentReceiveQueueSize = 1;
 
+        /// <summary>
+        /// Registers a socket against a multiplexer.
+        /// </summary>
+        /// <param name="multiplexer">The multiplexer to register a socket with.</param>
+        /// <param name="socket">The socket to register. Must have been created using <see cref="CreateRegisterableSocket(AddressFamily, SocketType, ProtocolType)"/>.</param>
         public RegisteredSocket(RegisteredMultiplexer multiplexer, Socket socket)
         {
-            lock (multiplexer.SafeHandle)
-            {
-                _requestQueue = Interop.Rio.CreateRequestQueue(socket.SafeHandle, multiplexer.SafeHandle, IntPtr.Zero, 1, 1, 1, 1);
-            }
-
             _socket = socket;
+            _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
         }
 
         public void Dispose()
@@ -31,81 +37,210 @@ namespace rio_prototype
 
         public ValueTask<int> SendAsync(ReadOnlyMemory<byte> memory)
         {
-            RegisteredOperationEventArgs args = Interlocked.Exchange(ref _cachedSendArgs, null) ?? new RegisteredOperationEventArgs();
+            RegisteredOperationEventArgs args = GetOrCreateEventArgs();
 
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, isSend: true, memory);
+            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, memory);
             try
             {
                 lock (_requestQueue)
                 {
-                    Interop.Rio.Send(_requestQueue, buffersPtr, 1, 0, requestContext);
+                    while (true)
+                    {
+                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, 1, 0, requestContext);
+                        switch (err)
+                        {
+                            case SocketError.Success:
+                            case SocketError.IOPending:
+                                return task;
+                            case SocketError.NoBufferSpaceAvailable:
+                                ResizeSendQueue();
+                                continue;
+                            default:
+                                args.Complete(new SocketException((int)err), 0);
+                                return task;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 args.Complete(ex, 0);
+                return task;
             }
-            return task;
         }
 
         public ValueTask<int> SendAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory)
         {
-            RegisteredOperationEventArgs args = Interlocked.Exchange(ref _cachedSendArgs, null) ?? new RegisteredOperationEventArgs();
+            RegisteredOperationEventArgs args = GetOrCreateEventArgs();
 
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, isSend: true, memory);
+            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, memory);
             try
             {
                 lock (_requestQueue)
                 {
-                    Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, 0, requestContext);
+                    while (true)
+                    {
+                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, 0, requestContext);
+                        switch (err)
+                        {
+                            case SocketError.Success:
+                            case SocketError.IOPending:
+                                return task;
+                            case SocketError.NoBufferSpaceAvailable:
+                                ResizeSendQueue();
+                                continue;
+                            default:
+                                args.Complete(new SocketException((int)err), 0);
+                                return task;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 args.Complete(ex, 0);
+                return task;
             }
+        }
 
-            return task;
+        public ValueTask<int> SendToAsync(ReadOnlyMemory<byte> memory, RegisteredEndPoint remoteEndPoint)
+        {
+            throw new NotImplementedException();
+        }
+
+        public ValueTask<int> SendToAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory, RegisteredEndPoint remoteEndPoint)
+        {
+            throw new NotImplementedException();
         }
 
         public ValueTask<int> ReceiveAsync(Memory<byte> memory)
         {
-            RegisteredOperationEventArgs args = Interlocked.Exchange(ref _cachedRecvArgs, null) ?? new RegisteredOperationEventArgs();
+            RegisteredOperationEventArgs args = GetOrCreateEventArgs();
 
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, isSend: false, memory);
+            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, memory);
             try
             {
                 lock (_requestQueue)
                 {
-                    Interop.Rio.Receive(_requestQueue, buffersPtr, 1, 0, requestContext);
+                    while (true)
+                    {
+                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, 1, 0, requestContext);
+                        switch (err)
+                        {
+                            case SocketError.Success:
+                            case SocketError.IOPending:
+                                return task;
+                            case SocketError.NoBufferSpaceAvailable:
+                                ResizeReceiveQueue();
+                                continue;
+                            default:
+                                args.Complete(new SocketException((int)err), 0);
+                                return task;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 args.Complete(ex, 0);
+                return task;
             }
-
-            return task;
         }
 
         public ValueTask<int> ReceiveAsync(ReadOnlySpan<Memory<byte>> memory)
         {
-            RegisteredOperationEventArgs args = Interlocked.Exchange(ref _cachedRecvArgs, null) ?? new RegisteredOperationEventArgs();
+            RegisteredOperationEventArgs args = GetOrCreateEventArgs();
 
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, isSend: false, memory);
+            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = args.Prepare(this, memory);
             try
             {
                 lock (_requestQueue)
                 {
-                    Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, 0, requestContext);
+                    while (true)
+                    {
+                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, 0, requestContext);
+                        switch (err)
+                        {
+                            case SocketError.Success:
+                            case SocketError.IOPending:
+                                return task;
+                            case SocketError.NoBufferSpaceAvailable:
+                                ResizeReceiveQueue();
+                                continue;
+                            default:
+                                args.Complete(new SocketException((int)err), 0);
+                                return task;
+                        }
+                    }
                 }
             }
             catch (Exception ex)
             {
                 args.Complete(ex, 0);
+                return task;
             }
+        }
 
-            return task;
+        public ValueTask<int> ReceiveFromAsync(Memory<byte> memory, RegisteredEndPoint remoteEndPoint)
+        {
+            throw new NotImplementedException();
+        }
+
+        public ValueTask<int> ReceiveFromAsync(ReadOnlySpan<Memory<byte>> memory, RegisteredEndPoint remoteEndPoint)
+        {
+            throw new NotImplementedException();
+        }
+
+        private void ResizeSendQueue()
+        {
+            Debug.Assert(Monitor.IsEntered(_requestQueue));
+            ResizeRequestQueue(_currentReceiveQueueSize, _currentSendQueueSize * 2);
+        }
+
+        private void ResizeReceiveQueue()
+        {
+            Debug.Assert(Monitor.IsEntered(_requestQueue));
+            ResizeRequestQueue(_currentReceiveQueueSize * 2, _currentSendQueueSize);
+        }
+
+        private void ResizeRequestQueue(uint newReceiveQueueSize, uint newSendQueueSize)
+        {
+            Debug.Assert(Monitor.IsEntered(_requestQueue));
+            Interop.Rio.ResizeRequestQueue(_requestQueue, newReceiveQueueSize, newSendQueueSize);
+            _currentReceiveQueueSize = newReceiveQueueSize;
+            _currentSendQueueSize = newSendQueueSize;
+        }
+
+        private RegisteredOperationEventArgs GetOrCreateEventArgs()
+        {
+            return GetCachedEventArgs() ?? new RegisteredOperationEventArgs();
+        }
+
+        private RegisteredOperationEventArgs GetCachedEventArgs()
+        {
+            RegisteredOperationEventArgs current = _cachedArgs, cmp;
+            do
+            {
+                if (current == null)
+                {
+                    return current;
+                }
+
+                cmp = current;
+            } while ((current = Interlocked.CompareExchange(ref _cachedArgs, current.Next, current)) != cmp);
+
+            current.Next = null;
+            return current;
+        }
+
+        internal void ReturnCachedEventArgs(RegisteredOperationEventArgs args)
+        {
+            RegisteredOperationEventArgs current = _cachedArgs, cmp;
+            do
+            {
+                args.Next = current;
+                cmp = current;
+            } while ((current = Interlocked.CompareExchange(ref _cachedArgs, args, current)) != cmp);
         }
 
         public static Socket CreateRegisterableSocket(AddressFamily family, SocketType socketType, ProtocolType protocolType)

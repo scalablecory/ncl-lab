@@ -3,6 +3,9 @@ using System.Numerics;
 
 namespace rio_prototype
 {
+    /// <summary>
+    /// A pool for registered memory.
+    /// </summary>
     public sealed class RegisteredMemoryPool : MemoryPool<byte>
     {
         private const int MinBufferSizeConst = 1 << 6;

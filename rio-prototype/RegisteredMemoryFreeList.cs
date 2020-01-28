@@ -4,6 +4,9 @@ using System.Threading;
 
 namespace rio_prototype
 {
+    /// <summary>
+    /// A thread-safe memory pool for specific block sizes.
+    /// </summary>
     internal sealed class RegisteredMemoryFreeList : IDisposable
     {
         private OwnedMemory _free;

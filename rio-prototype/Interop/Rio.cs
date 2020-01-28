@@ -16,15 +16,17 @@ namespace rio_prototype.Interop
         private const int WSA_FLAG_REGISTERED_IO = 0x100;
 
         private static bool s_init;
-        private static RIORegisterBuffer s_rioRegisterBuffer;
-        private static RIODeregisterBuffer s_rioDeregisterBuffer;
-        private static RIOCreateCompletionQueue s_rioCreateCompletionQueue;
-        private static RIOCloseCompletionQueue s_rioCloseCompletionQueue;
-        private static RIONotify s_rioNotify;
-        private static RIOCreateRequestQueue s_rioCreateRequestQueue;
-        private static RIODequeueCompletion s_rioDequeueCompletion;
         private static RIOSend s_rioSend;
         private static RIOReceive s_rioReceive;
+        private static RIODequeueCompletion s_rioDequeueCompletion;
+        private static RIONotify s_rioNotify;
+        private static RIORegisterBuffer s_rioRegisterBuffer;
+        private static RIODeregisterBuffer s_rioDeregisterBuffer;
+        private static RIOResizeCompletionQueue s_rioResizeCompletionQueue;
+        private static RIOCreateRequestQueue s_rioCreateRequestQueue;
+        private static RIOResizeRequestQueue s_rioResizeRequestQueue;
+        private static RIOCreateCompletionQueue s_rioCreateCompletionQueue;
+        private static RIOCloseCompletionQueue s_rioCloseCompletionQueue;
 
         public static IntPtr RegisterBuffer(IntPtr buffer, int bufferLength)
         {
@@ -56,7 +58,7 @@ namespace rio_prototype.Interop
             {
                 Type = RIO_EVENT_COMPLETION,
                 EventHandle = waitHandle.DangerousGetHandle(),
-                NotifyReset = true,
+                NotifyReset = 0,
                 Padding = IntPtr.Zero
             };
 
@@ -67,6 +69,13 @@ namespace rio_prototype.Interop
             return handle;
         }
 
+        public static void ResizeCompletionQueue(SafeRioCompletionQueueHandle queueHandle, uint queueSize)
+        {
+            Debug.Assert(!queueHandle.IsInvalid);
+            if (!s_rioResizeCompletionQueue(queueHandle, queueSize))
+                throw new SocketException();
+        }
+
         public static void CloseCompletionQueue(IntPtr queueHandle)
         {
             Debug.Assert(queueHandle != IntPtr.Zero);
@@ -75,8 +84,13 @@ namespace rio_prototype.Interop
 
         public static void Notify(SafeRioCompletionQueueHandle queueHandle)
         {
+            Debug.Assert(!queueHandle.IsInvalid);
+
             int res = s_rioNotify(queueHandle);
-            if (res != 0) throw new SocketException(res);
+            if (res != (int)SocketError.Success)
+            {
+                throw new SocketException(res);
+            }
         }
 
         public static SafeRioRequestQueueHandle CreateRequestQueue(SafeSocketHandle socket, SafeRioCompletionQueueHandle completionQueue, IntPtr context, uint maxOutstandingReceive, uint maxReceiveDataBuffers, uint maxOutstandingSend, uint maxSendDataBuffers)
@@ -91,6 +105,16 @@ namespace rio_prototype.Interop
             return queue;
         }
 
+        public static void ResizeRequestQueue(SafeRioRequestQueueHandle queue, uint maxOutstandingReceive, uint maxOutstandingSend)
+        {
+            Debug.Assert(!queue.IsInvalid);
+
+            if (!s_rioResizeRequestQueue(queue, maxOutstandingReceive, maxOutstandingSend))
+            {
+                throw new SocketException();
+            }
+        }
+
         public static int DequeueCompletions(SafeRioCompletionQueueHandle queue, Span<RIORESULT> results)
         {
             Debug.Assert(!queue.IsInvalid);
@@ -101,24 +125,17 @@ namespace rio_prototype.Interop
             return res;
         }
 
-        public static void Send(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Send(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-
-            if (!s_rioSend(queue, buffers, bufferCount, flags, requestContext))
-            {
-                throw new SocketException();
-            }
+            return s_rioSend(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static void Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
 
-            if (!s_rioReceive(queue, buffers, bufferCount, flags, requestContext))
-            {
-                throw new SocketException();
-            }
+            return s_rioReceive(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
         public static SafeSocketHandle CreateRegisterableSocket(int af, int type, int protocol)
@@ -156,9 +173,11 @@ namespace rio_prototype.Interop
                 s_rioRegisterBuffer = Marshal.GetDelegateForFunctionPointer<RIORegisterBuffer>(table.RIORegisterBuffer);
                 s_rioDeregisterBuffer = Marshal.GetDelegateForFunctionPointer<RIODeregisterBuffer>(table.RIODeregisterBuffer);
                 s_rioCreateCompletionQueue = Marshal.GetDelegateForFunctionPointer<RIOCreateCompletionQueue>(table.RIOCreateCompletionQueue);
+                s_rioResizeCompletionQueue = Marshal.GetDelegateForFunctionPointer<RIOResizeCompletionQueue>(table.RIOResizeCompletionQueue);
                 s_rioCloseCompletionQueue = Marshal.GetDelegateForFunctionPointer<RIOCloseCompletionQueue>(table.RIOCloseCompletionQueue);
                 s_rioNotify = Marshal.GetDelegateForFunctionPointer<RIONotify>(table.RIONotify);
                 s_rioCreateRequestQueue = Marshal.GetDelegateForFunctionPointer<RIOCreateRequestQueue>(table.RIOCreateRequestQueue);
+                s_rioResizeRequestQueue = Marshal.GetDelegateForFunctionPointer<RIOResizeRequestQueue>(table.RIOResizeRequestQueue);
                 s_rioDequeueCompletion = Marshal.GetDelegateForFunctionPointer<RIODequeueCompletion>(table.RIODequeueCompletion);
                 s_rioSend = Marshal.GetDelegateForFunctionPointer<RIOSend>(table.RIOSend);
                 s_rioReceive = Marshal.GetDelegateForFunctionPointer<RIOReceive>(table.RIOReceive);
@@ -188,8 +207,7 @@ namespace rio_prototype.Interop
         {
             public int Type;
             public IntPtr EventHandle;
-            [MarshalAs(UnmanagedType.Bool)]
-            public bool NotifyReset;
+            public int NotifyReset; // win32 BOOL; int to make blittable.
             public IntPtr Padding;
         }
 
@@ -217,17 +235,22 @@ namespace rio_prototype.Interop
         [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
         private delegate SafeRioCompletionQueueHandle RIOCreateCompletionQueue(uint QueueSize, ref RIO_NOTIFICATION_COMPLETION NotificationCompletion);
 
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate void RIOCloseCompletionQueue(IntPtr CQ);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
+        private delegate bool RIOResizeCompletionQueue(SafeRioCompletionQueueHandle CQ, uint QueueSize);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate int RIONotify(SafeRioCompletionQueueHandle CQ);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate int RIODequeueCompletion(SafeRioCompletionQueueHandle CQ, ref RIORESULT results, int resultCount);
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate void RIOCloseCompletionQueue(IntPtr CQ);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
         private delegate SafeRioRequestQueueHandle RIOCreateRequestQueue(SafeSocketHandle Socket, uint MaxOutstandingReceive, uint MaxReceiveDataBuffers, uint MaxOutstandingSend, uint MaxSendDataBuffers, SafeRioCompletionQueueHandle ReceiveCQ, SafeRioCompletionQueueHandle SendCQ, IntPtr SocketContext);
 
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-        private delegate int RIODequeueCompletion(SafeRioCompletionQueueHandle CQ, ref RIORESULT results, int resultCount);
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
+        private delegate bool RIOResizeRequestQueue(SafeRioRequestQueueHandle RQ, uint MaxOutstandingReceive, uint MaxOutstandingSend);
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall, SetLastError = true)]
         private delegate bool RIOSend(SafeRioRequestQueueHandle SocketQueue, IntPtr pData, int DataBufferCount, uint Flags, IntPtr RequestContext);
