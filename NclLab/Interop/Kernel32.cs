@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 
-namespace rio_prototype.Interop
+namespace NclLab.Interop
 {
     internal unsafe static class Kernel32
     {

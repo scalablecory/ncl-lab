@@ -2,7 +2,7 @@
 using System.Net.Sockets;
 using System.Threading;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A multiplexer for registered sockets.

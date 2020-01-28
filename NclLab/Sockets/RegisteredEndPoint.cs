@@ -1,11 +1,8 @@
 ﻿using System;
 using System.Buffers;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Net;
-using System.Text;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A mutable, registered EndPoint.

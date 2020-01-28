@@ -5,7 +5,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace rio_prototype.Interop
+namespace NclLab.Interop
 {
     internal static class Rio
     {

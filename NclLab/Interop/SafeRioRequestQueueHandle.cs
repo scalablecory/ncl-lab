@@ -2,7 +2,7 @@
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
-namespace rio_prototype.Interop
+namespace NclLab.Interop
 {
     internal sealed class SafeRioRequestQueueHandle : SafeHandle
     {

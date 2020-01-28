@@ -1,9 +1,8 @@
 ﻿using System;
 using System.Buffers;
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A manager for registered memory.

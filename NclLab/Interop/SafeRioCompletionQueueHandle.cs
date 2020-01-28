@@ -3,7 +3,7 @@ using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace rio_prototype.Interop
+namespace NclLab.Interop
 {
     internal sealed class SafeRioCompletionQueueHandle : SafeHandle
     {

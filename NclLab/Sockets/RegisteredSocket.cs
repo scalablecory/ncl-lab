@@ -6,12 +6,12 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A registered socket.
     /// </summary>
-    sealed class RegisteredSocket : IDisposable
+    public sealed class RegisteredSocket : IDisposable
     {
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
         internal readonly Socket _socket;

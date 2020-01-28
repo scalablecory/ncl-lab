@@ -2,7 +2,7 @@
 using System.Buffers;
 using System.Threading;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A thread-safe memory pool for specific block sizes.

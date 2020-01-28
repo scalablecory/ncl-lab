@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Sources;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// Async operation state. Can be cached to provide allocationless I/O.
@@ -29,7 +29,7 @@ namespace rio_prototype
         private readonly PreAllocatedOverlapped _preallocatedOverlapped;
         private NativeOverlapped* _overlapped;
 
-        internal RegisteredOperationContext()
+        public RegisteredOperationContext()
         {
             _preallocatedOverlapped = new PreAllocatedOverlapped(delegate { }, _thisRef, null);
             _valueTaskSource.RunContinuationsAsynchronously = true;

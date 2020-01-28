@@ -1,7 +1,7 @@
 ﻿using System.Buffers;
 using System.Numerics;
 
-namespace rio_prototype
+namespace NclLab.Sockets
 {
     /// <summary>
     /// A thread-safe pool for registered memory.
