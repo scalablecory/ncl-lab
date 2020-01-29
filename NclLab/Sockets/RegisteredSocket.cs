@@ -44,7 +44,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount: 1, remoteAddress: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount: 1, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -76,7 +76,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, remoteAddress: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -108,7 +108,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -140,7 +140,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -172,7 +172,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount: 1, remoteAddress: IntPtr.Zero, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount: 1, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -204,7 +204,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, remoteAddress: IntPtr.Zero, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -236,7 +236,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.ReceiveTo(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
@@ -268,7 +268,7 @@ namespace NclLab.Sockets
                 {
                     while (true)
                     {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
+                        SocketError err = Interop.Rio.ReceiveTo(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
                         switch (err)
                         {
                             case SocketError.Success:
