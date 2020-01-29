@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using NclLab.Sockets;
 using System.Net.Sockets;
 using System.Buffers;
+using System.Diagnostics;
 
 namespace NclLab.Kestrel
 {
@@ -17,19 +18,19 @@ namespace NclLab.Kestrel
         readonly RegisteredMultiplexer _multiplexer = new RegisteredMultiplexer();
         readonly RegisteredMemoryPool _pool = new RegisteredMemoryPool();
         readonly SocketTransportOptions _options;
-        readonly Socket _socket;
+        readonly Socket _listenSocket;
 
-        public EndPoint EndPoint => _socket.LocalEndPoint;
+        public EndPoint EndPoint => _listenSocket.LocalEndPoint;
 
         public RegisteredSocketConnectionListener(SocketTransportOptions options, Socket socket)
         {
             _options = options;
-            _socket = socket;
+            _listenSocket = socket;
         }
 
         public ValueTask DisposeAsync()
         {
-            _socket.Dispose();
+            _listenSocket.Dispose();
             _multiplexer.Dispose();
             _pool.Dispose();
             return default;
@@ -46,10 +47,15 @@ namespace NclLab.Kestrel
                 try
                 {
                     acceptSocket = RegisteredSocket.CreateRegisterableSocket(af, SocketType.Stream, ProtocolType.Tcp);
+                    var registeredSocket = new RegisteredSocket(_multiplexer, acceptSocket);
 
-                    await _socket.AcceptAsync(acceptSocket);
+                    Socket newsocket = await _listenSocket.AcceptAsync(acceptSocket);
+                    Debug.Assert(newsocket == acceptSocket);
 
-                    return new RegisteredSocketConnection(_pool, _multiplexer, _socket);
+                    var con = new RegisteredSocketConnection(_pool, acceptSocket, registeredSocket);
+                    acceptSocket = null;
+
+                    return con;
                 }
                 catch (ObjectDisposedException)
                 {
@@ -72,7 +78,7 @@ namespace NclLab.Kestrel
 
         public ValueTask UnbindAsync(CancellationToken cancellationToken = default)
         {
-            _socket.Dispose();
+            _listenSocket.Dispose();
             return default;
         }
     }

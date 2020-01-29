@@ -8,8 +8,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Pipelines;
-using System.Linq;
-using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,10 +23,10 @@ namespace NclLab.Kestrel
         private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private Exception _shutdownReason;
 
-        public RegisteredSocketConnection(RegisteredMemoryPool memoryPool, RegisteredMultiplexer multiplexer, Socket socket)
+        public RegisteredSocketConnection(RegisteredMemoryPool memoryPool, Socket socket, RegisteredSocket registeredSocket)
         {
             _socket = socket;
-            _registeredSocket = new RegisteredSocket(multiplexer, socket);
+            _registeredSocket = registeredSocket;
             ConnectionClosed = _cancellationTokenSource.Token;
 
             var pipeOptions = new PipeOptions(pool: memoryPool, useSynchronizationContext: false);

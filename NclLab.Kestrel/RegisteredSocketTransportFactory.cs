@@ -34,6 +34,11 @@ namespace NclLab.Kestrel
                 socket.DualMode = true;
             }
 
+            if (_options.NoDelay)
+            {
+                socket.NoDelay = true;
+            }
+
             try
             {
                 socket.Bind(endpoint);
@@ -42,6 +47,8 @@ namespace NclLab.Kestrel
             {
                 throw new AddressInUseException(ex.Message, ex);
             }
+
+            socket.Listen(int.MaxValue);
 
             return new ValueTask<IConnectionListener>(new RegisteredSocketConnectionListener(_options, socket));
         }

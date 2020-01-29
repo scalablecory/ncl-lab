@@ -61,7 +61,6 @@ namespace RegisteredKestrelSample
             using HttpRequestMessage req = new HttpRequestMessage();
 
             req.Method = HttpMethod.Post;
-            req.Version = HttpVersion.Version20;
             req.RequestUri = _endpointUri;
             req.Content = new StringContent("asdf", Encoding.ASCII, "application/grpc+proto");
 
@@ -70,7 +69,13 @@ namespace RegisteredKestrelSample
 
         static HttpClient CreateHttpClient()
         {
-            var client = new HttpClient();
+            var handler = new SocketsHttpHandler();
+            handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
+            {
+                RemoteCertificateValidationCallback = delegate { return true; }
+            };
+
+            var client = new HttpClient(handler);
 
             client.DefaultRequestHeaders.TryAddWithoutValidation("grpc-timeout", "15");
             client.DefaultRequestHeaders.TryAddWithoutValidation("grpc-encoding", "gzip");
@@ -97,8 +102,8 @@ namespace RegisteredKestrelSample
                 })
                 .ConfigureLogging(logging =>
                 {
-                    logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-                    //logging.AddFilter("Microsoft.AspNetCore", LogLevel.Trace);
+                    //logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+                    logging.AddFilter("Microsoft.AspNetCore", LogLevel.Trace);
                 })
                 .Configure(app =>
                 {
@@ -131,13 +136,11 @@ namespace RegisteredKestrelSample
 
         public static void Main(string[] args)
         {
-            Console.WriteLine(typeof(System.Net.Http.SocketsHttpHandler).Assembly.Location);
-
             Program p = new Program();
 
             p.Setup();
-            //p.GetSimple().GetAwaiter().GetResult();
-            PoorMansBenchmark(() => p.GetSimple().Wait());
+            p.GetSimple().GetAwaiter().GetResult();
+            //PoorMansBenchmark(() => p.GetSimple().Wait());
             p.Cleanup();
 
             //BenchmarkRunner.Run<Program>();
