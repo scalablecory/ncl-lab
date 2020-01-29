@@ -9,52 +9,54 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Pipelines;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace NclLab.Kestrel
 {
-    public class RegisteredSocketConnection : ConnectionContext, IFeatureCollection, IConnectionIdFeature, IConnectionTransportFeature, IConnectionItemsFeature, IMemoryPoolFeature, IConnectionLifetimeFeature
+    internal class RegisteredSocketConnection : ConnectionContext, IFeatureCollection, IConnectionIdFeature, IConnectionTransportFeature, IConnectionItemsFeature, IMemoryPoolFeature, IConnectionLifetimeFeature, IDuplexPipe
     {
         private readonly Socket _socket;
         private readonly RegisteredSocket _registeredSocket;
-        private readonly IDuplexPipe _application;
+
+        private readonly PipeReader _transportInput, _socketInput;
+        private readonly PipeWriter _transportOutput, _socketOutput;
+
         private readonly Task _ioTask;
         private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private Exception _shutdownReason;
 
         public RegisteredSocketConnection(RegisteredMemoryPool memoryPool, Socket socket, RegisteredSocket registeredSocket)
         {
+            _features.Add(typeof(IConnectionIdFeature), this);
+            _features.Add(typeof(IConnectionTransportFeature), this);
+            _features.Add(typeof(IConnectionItemsFeature), this);
+            _features.Add(typeof(IMemoryPoolFeature), this);
+            _features.Add(typeof(IConnectionLifetimeFeature), this);
+
             _socket = socket;
             _registeredSocket = registeredSocket;
             ConnectionClosed = _cancellationTokenSource.Token;
+            LocalEndPoint = socket.LocalEndPoint;
+            RemoteEndPoint = socket.RemoteEndPoint;
 
             var pipeOptions = new PipeOptions(pool: memoryPool, useSynchronizationContext: false);
-            var input = new Pipe(pipeOptions);
-            var output = new Pipe(pipeOptions);
-            _application = new DuplexPipe(output.Reader, input.Writer);
-            Transport = new DuplexPipe(input.Reader, output.Writer);
+            var x = new Pipe(pipeOptions);
+            var y = new Pipe(pipeOptions);
 
-            _ioTask = Task.WhenAll(DoSendAsync(), DoReceiveAsync());
-        }
+            (_transportInput, _transportOutput) = (x.Reader, y.Writer);
+            (_socketInput, _socketOutput) = (y.Reader, x.Writer);
+            Transport = this;
 
-        private sealed class DuplexPipe : IDuplexPipe
-        {
-            public PipeReader Input { get; }
-            public PipeWriter Output { get; }
-
-            public DuplexPipe(PipeReader input, PipeWriter output)
-            {
-                Input = input;
-                Output = output;
-            }
+            _ioTask = Task.WhenAll(DoReceiveAsync(), DoSendAsync());
         }
 
         public override async ValueTask DisposeAsync()
         {
             Transport.Input.Complete();
             Transport.Output.Complete();
-            await _ioTask.ConfigureAwait(false);
+            await _ioTask;
 
             _registeredSocket.Dispose();
             _socket.Dispose();
@@ -65,50 +67,61 @@ namespace NclLab.Kestrel
         {
             Exception shutdownReason = null;
             Exception unexpectedError = null;
-            PipeReader applicationOutput = _application.Input;
 
             try
             {
-                RegisteredOperationContext operationContext = new RegisteredOperationContext();
-                ReadOnlyMemory<byte>[] sendBuffers = new ReadOnlyMemory<byte>[1];
+                RegisteredOperationContext operationContext = _registeredSocket.CreateOperationContext();
+                var sendBuffers = new ReadOnlyMemory<byte>[1];
 
                 while (true)
                 {
-                    ReadResult readResult = await applicationOutput.ReadAsync().ConfigureAwait(false);
+                    ReadResult readResult = await _socketInput.ReadAsync();
 
                     if (readResult.IsCanceled)
                     {
                         break;
                     }
 
-                    int idx = 0;
-                    foreach (ReadOnlyMemory<byte> segment in readResult.Buffer)
+                    ReadOnlySequence<byte> buffer = readResult.Buffer;
+
+                    if (!buffer.IsEmpty)
                     {
-                        if (idx == sendBuffers.Length)
+                        ValueTask<int> bytesSentTask;
+
+                        if (buffer.IsSingleSegment)
                         {
-                            Array.Resize(ref sendBuffers, sendBuffers.Length * 2);
+                            bytesSentTask = operationContext.SendAsync(buffer.First);
+                        }
+                        else
+                        {
+                            int idx = 0;
+                            foreach (ReadOnlyMemory<byte> segment in readResult.Buffer)
+                            {
+                                if (idx == sendBuffers.Length)
+                                {
+                                    Array.Resize(ref sendBuffers, sendBuffers.Length * 2);
+                                }
+
+                                sendBuffers[idx++] = segment;
+                            }
+
+                            bytesSentTask = operationContext.SendAsync(sendBuffers.AsSpan(0, idx));
                         }
 
-                        sendBuffers[idx] = segment;
+                        int bytesSent = await bytesSentTask;
+                        _socketInput.AdvanceTo(buffer.GetPosition(bytesSent));
                     }
-
-                    int sentBytes = await _registeredSocket.SendAsync(sendBuffers.AsSpan(0, idx), operationContext).ConfigureAwait(false);
-
-                    if (sentBytes == 0)
+                    else if (readResult.IsCompleted)
                     {
-                        applicationOutput.Complete();
-                        _application.Output.CancelPendingFlush();
                         break;
                     }
-
-                    applicationOutput.AdvanceTo(readResult.Buffer.GetPosition(sentBytes));
                 }
             }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+            catch (SocketException ex) when (IsConnectionResetError(ex.SocketErrorCode))
             {
                 shutdownReason = new ConnectionResetException(ex.Message, ex);
             }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.OperationAborted)
+            catch (SocketException ex) when (IsConnectionAbortError(ex.SocketErrorCode))
             {
                 shutdownReason = ex;
             }
@@ -123,31 +136,30 @@ namespace NclLab.Kestrel
             }
 
             Shutdown(shutdownReason);
-            applicationOutput.Complete(unexpectedError);
-            _application.Output.CancelPendingFlush();
+            _socketInput.Complete(unexpectedError);
+            _socketOutput.CancelPendingFlush();
         }
 
         private async Task DoReceiveAsync()
         {
             Exception error = null;
-            PipeWriter applicationInput = _application.Output;
 
             try
             {
-                RegisteredOperationContext operationContext = new RegisteredOperationContext();
+                RegisteredOperationContext operationContext = _registeredSocket.CreateOperationContext();
 
                 while (true)
                 {
-                    int bytesReceived = await _registeredSocket.ReceiveAsync(applicationInput.GetMemory(), operationContext).ConfigureAwait(false);
+                    int bytesReceived = await operationContext.ReceiveAsync(_socketOutput.GetMemory());
 
                     if (bytesReceived == 0)
                     {
                         break;
                     }
 
-                    applicationInput.Advance(bytesReceived);
+                    _socketOutput.Advance(bytesReceived);
 
-                    FlushResult flushResult = await applicationInput.FlushAsync();
+                    FlushResult flushResult = await _socketOutput.FlushAsync();
 
                     if (flushResult.IsCompleted || flushResult.IsCanceled)
                     {
@@ -155,7 +167,7 @@ namespace NclLab.Kestrel
                     }
                 }
             }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset)
+            catch (SocketException ex) when (IsConnectionResetError(ex.SocketErrorCode))
             {
                 error = new ConnectionResetException(ex.Message, ex);
             }
@@ -164,38 +176,57 @@ namespace NclLab.Kestrel
                 error = ex;
             }
 
-            applicationInput.Complete(Volatile.Read(ref _shutdownReason) ?? error);
+            _socketOutput.Complete(Volatile.Read(ref _shutdownReason) ?? error);
             _cancellationTokenSource.Cancel();
+        }
+
+        private static bool IsConnectionResetError(SocketError errorCode)
+        {
+            return errorCode == SocketError.ConnectionReset ||
+                   errorCode == SocketError.Shutdown ||
+                   errorCode == SocketError.ConnectionAborted;
+        }
+
+        private static bool IsConnectionAbortError(SocketError errorCode)
+        {
+            return errorCode == SocketError.OperationAborted ||
+                   errorCode == SocketError.Interrupted;
         }
 
         private void Shutdown(Exception shutdownReason)
         {
             if (_shutdownReason != null)
             {
+                // Already shut down.
                 return;
             }
 
             shutdownReason ??= new ConnectionAbortedException("The Socket transport's send loop completed gracefully.");
 
-            if (Interlocked.CompareExchange(ref _shutdownReason, shutdownReason, null) == null)
+            if (Interlocked.CompareExchange(ref _shutdownReason, shutdownReason, null) != null)
             {
-                try
-                {
-                    _socket.Shutdown(SocketShutdown.Both);
-                }
-                catch
-                {
-                    // ignored.
-                }
-
-                _socket.Dispose();
+                // Already shut down, another thread won a race.
+                return;
             }
+
+            // Actually shut down.
+
+            try
+            {
+                _socket.Shutdown(SocketShutdown.Both);
+            }
+            catch
+            {
+                // ignored.
+            }
+
+            _socket.Dispose();
         }
 
         public override void Abort(ConnectionAbortedException abortReason)
         {
             Shutdown(abortReason);
-            _application.Input.CancelPendingRead();
+            _socketInput.CancelPendingRead();
         }
 
         #region Boilerplate nonsense
@@ -258,6 +289,9 @@ namespace NclLab.Kestrel
 
         public override IDuplexPipe Transport { get; set; }
 
+        PipeReader IDuplexPipe.Input => _transportInput;
+        PipeWriter IDuplexPipe.Output => _transportOutput;
+
         MemoryPool<byte> IMemoryPoolFeature.MemoryPool => MemoryPool<byte>.Shared;
 
         public override IDictionary<object, object> Items
@@ -265,8 +299,6 @@ namespace NclLab.Kestrel
             get => _items ??= new Dictionary<object, object>();
             set => _items = value;
         }
-
-        CancellationToken IConnectionLifetimeFeature.ConnectionClosed { get; set; }
 
         #endregion
     }

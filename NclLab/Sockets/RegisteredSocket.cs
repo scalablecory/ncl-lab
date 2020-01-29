@@ -1,11 +1,9 @@
 ﻿using System;
-using System.Buffers;
 using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace NclLab.Sockets
 {
@@ -14,8 +12,9 @@ namespace NclLab.Sockets
     /// </summary>
     public sealed class RegisteredSocket : IDisposable
     {
+        private static Func<Socket, ThreadPoolBoundHandle> s_GetOrAllocateThreadPoolBoundHandle;
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
-        internal readonly Socket _socket;
+        internal readonly ThreadPoolBoundHandle _boundHandle;
         private readonly Interop.SafeRioRequestQueueHandle _requestQueue;
         private uint _currentSendQueueSize = 1, _currentReceiveQueueSize = 1;
 
@@ -26,7 +25,7 @@ namespace NclLab.Sockets
         /// <param name="socket">The socket to register. Must have been created using <see cref="CreateRegisterableSocket(AddressFamily, SocketType, ProtocolType)"/>.</param>
         public RegisteredSocket(RegisteredMultiplexer multiplexer, Socket socket)
         {
-            _socket = socket;
+            _boundHandle = GetOrAllocateThreadPoolBoundHandle(socket);
             _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
         }
 
@@ -35,259 +34,80 @@ namespace NclLab.Sockets
             _requestQueue.Dispose();
         }
 
-        public ValueTask<int> SendAsync(ReadOnlyMemory<byte> memory, RegisteredOperationContext context)
+        public RegisteredOperationContext CreateOperationContext()
         {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = context.Prepare(this, memory);
-            try
+            return new RegisteredOperationContext(this);
+        }
+
+        internal SocketError StartSend(IntPtr buffersPtr, int bufferCount, IntPtr requestContext)
+        {
+            lock (_requestQueue)
             {
-                lock (_requestQueue)
+                while (true)
                 {
-                    while (true)
+                    SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount, flags: 0, requestContext);
+                    
+                    if (err != SocketError.NoBufferSpaceAvailable)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount: 1, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeSendQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
+                        return err;
                     }
+
+                    ResizeSendQueue();
                 }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
             }
         }
 
-        public ValueTask<int> SendAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory, RegisteredOperationContext context)
+        internal SocketError StartSendTo(IntPtr buffersPtr, int bufferCount, IntPtr remoteAddressPtr, IntPtr requestContext)
         {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = context.Prepare(this, memory);
-            try
+            lock (_requestQueue)
             {
-                lock (_requestQueue)
+                while (true)
                 {
-                    while (true)
+                    SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, bufferCount, remoteAddressPtr, flags: 0, requestContext);
+                    
+                    if (err != SocketError.NoBufferSpaceAvailable)
                     {
-                        SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, memory.Length, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeSendQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
+                        return err;
                     }
+
+                    ResizeSendQueue();
                 }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
             }
         }
 
-        public ValueTask<int> SendToAsync(ReadOnlyMemory<byte> memory, RegisteredEndPoint remoteEndPoint, RegisteredOperationContext context)
+        internal SocketError StartReceive(IntPtr buffersPtr, int bufferCount, IntPtr requestContext)
         {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr, IntPtr remoteEndPointPtr) = context.Prepare(this, memory, remoteEndPoint);
-            try
+            lock (_requestQueue)
             {
-                lock (_requestQueue)
+                while (true)
                 {
-                    while (true)
+                    SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount, flags: 0, requestContext);
+
+                    if (err != SocketError.NoBufferSpaceAvailable)
                     {
-                        SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeSendQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
+                        return err;
                     }
+
+                    ResizeReceiveQueue();
                 }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
             }
         }
 
-        public ValueTask<int> SendToAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory, RegisteredEndPoint remoteEndPoint, RegisteredOperationContext context)
+        internal SocketError StartReceiveFrom(IntPtr buffersPtr, int bufferCount, IntPtr remoteAddressPtr, IntPtr requestContext)
         {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr, IntPtr remoteEndPointPtr) = context.Prepare(this, memory, remoteEndPoint);
-            try
+            lock (_requestQueue)
             {
-                lock (_requestQueue)
+                while (true)
                 {
-                    while (true)
-                    {
-                        SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeSendQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
-            }
-        }
+                    SocketError err = Interop.Rio.ReceiveFrom(_requestQueue, buffersPtr, bufferCount, remoteAddressPtr, IntPtr.Zero, IntPtr.Zero, flags: 0, requestContext);
 
-        public ValueTask<int> ReceiveAsync(Memory<byte> memory, RegisteredOperationContext context)
-        {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = context.Prepare(this, memory);
-            try
-            {
-                lock (_requestQueue)
-                {
-                    while (true)
+                    if (err != SocketError.NoBufferSpaceAvailable)
                     {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount: 1, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeReceiveQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
+                        return err;
                     }
-                }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
-            }
-        }
 
-        public ValueTask<int> ReceiveAsync(ReadOnlySpan<Memory<byte>> memory, RegisteredOperationContext context)
-        {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr) = context.Prepare(this, memory);
-            try
-            {
-                lock (_requestQueue)
-                {
-                    while (true)
-                    {
-                        SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, memory.Length, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeReceiveQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
-                    }
+                    ResizeReceiveQueue();
                 }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
-            }
-        }
-
-        public ValueTask<int> ReceiveFromAsync(Memory<byte> memory, RegisteredEndPoint remoteEndPoint, RegisteredOperationContext context)
-        {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr, IntPtr remoteEndPointPtr) = context.Prepare(this, memory, remoteEndPoint);
-            try
-            {
-                lock (_requestQueue)
-                {
-                    while (true)
-                    {
-                        SocketError err = Interop.Rio.ReceiveTo(_requestQueue, buffersPtr, bufferCount: 1, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeReceiveQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
-            }
-        }
-
-        public ValueTask<int> ReceiveFromAsync(ReadOnlySpan<Memory<byte>> memory, RegisteredEndPoint remoteEndPoint, RegisteredOperationContext context)
-        {
-            (ValueTask<int> task, IntPtr requestContext, IntPtr buffersPtr, IntPtr remoteEndPointPtr) = context.Prepare(this, memory, remoteEndPoint);
-            try
-            {
-                lock (_requestQueue)
-                {
-                    while (true)
-                    {
-                        SocketError err = Interop.Rio.ReceiveTo(_requestQueue, buffersPtr, memory.Length, remoteEndPointPtr, controlContext: IntPtr.Zero, flagsOut: IntPtr.Zero, flags: 0, requestContext);
-                        switch (err)
-                        {
-                            case SocketError.Success:
-                            case SocketError.IOPending:
-                                return task;
-                            case SocketError.NoBufferSpaceAvailable:
-                                ResizeReceiveQueue();
-                                continue;
-                            default:
-                                context.Complete(new SocketException((int)err), transferred: 0);
-                                return task;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                context.Complete(ex, transferred: 0);
-                return task;
             }
         }
 
@@ -350,6 +170,17 @@ namespace NclLab.Sockets
 
                 return s_createRegisterableSocket(socketHandle, family, socketType, protocolType);
             }
+        }
+
+        private static ThreadPoolBoundHandle GetOrAllocateThreadPoolBoundHandle(Socket socket)
+        {
+            if (s_GetOrAllocateThreadPoolBoundHandle == null)
+            {
+                MethodInfo method = typeof(Socket).GetMethod("GetOrAllocateThreadPoolBoundHandle", BindingFlags.Instance | BindingFlags.NonPublic);
+                s_GetOrAllocateThreadPoolBoundHandle = (Func<Socket, ThreadPoolBoundHandle>)Delegate.CreateDelegate(typeof(Func<Socket, ThreadPoolBoundHandle>), method);
+            }
+
+            return s_GetOrAllocateThreadPoolBoundHandle(socket);
         }
     }
 }

@@ -47,11 +47,16 @@ namespace NclLab.Kestrel
                 try
                 {
                     acceptSocket = RegisteredSocket.CreateRegisterableSocket(af, SocketType.Stream, ProtocolType.Tcp);
-                    var registeredSocket = new RegisteredSocket(_multiplexer, acceptSocket);
+
+                    if (_options.NoDelay)
+                    {
+                        acceptSocket.NoDelay = true;
+                    }
 
                     Socket newsocket = await _listenSocket.AcceptAsync(acceptSocket);
                     Debug.Assert(newsocket == acceptSocket);
 
+                    var registeredSocket = new RegisteredSocket(_multiplexer, acceptSocket);
                     var con = new RegisteredSocketConnection(_pool, acceptSocket, registeredSocket);
                     acceptSocket = null;
 

@@ -11,7 +11,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "RegisteredSocketsSample", "
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "NclLab.Kestrel", "NclLab.Kestrel\NclLab.Kestrel.csproj", "{A120E038-057C-42BE-95CB-F740102BCE2F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RegisteredKestrelSample", "RegisteredKestrelSample\RegisteredKestrelSample.csproj", "{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "RegisteredKestrelSample", "RegisteredKestrelSample\RegisteredKestrelSample.csproj", "{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RegisteredServerSample", "RegisteredServerSample\RegisteredServerSample.csproj", "{0914031A-69EC-46EE-A386-7904496F17FE}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -35,6 +37,10 @@ Global
 		{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0914031A-69EC-46EE-A386-7904496F17FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0914031A-69EC-46EE-A386-7904496F17FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0914031A-69EC-46EE-A386-7904496F17FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0914031A-69EC-46EE-A386-7904496F17FE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -42,6 +48,7 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{66165B99-DC77-40A4-90B9-05A1CB468FEA} = {669A9A23-621B-43A3-AAFB-5C9471A58EEA}
 		{FBAA9AAA-EC67-43F1-949A-31D35B63DAE7} = {669A9A23-621B-43A3-AAFB-5C9471A58EEA}
+		{0914031A-69EC-46EE-A386-7904496F17FE} = {669A9A23-621B-43A3-AAFB-5C9471A58EEA}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {5F76C7A3-5F1D-4091-9DD5-4756D15775D1}

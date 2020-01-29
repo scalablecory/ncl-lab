@@ -36,7 +36,7 @@ namespace RegisteredSocketsSample
                 {
                     Console.WriteLine($"{clientId}: sending...");
 
-                    var operationContext = new RegisteredOperationContext();
+                    var operationContext = registeredSocket.CreateOperationContext();
                     using IMemoryOwner<byte> sendBufferOwner = bufferPool.Rent(128);
                     Memory<byte> sendBuffer = sendBufferOwner.Memory;
 
@@ -45,7 +45,7 @@ namespace RegisteredSocketsSample
 
                     while (sendBuffer.Length != 0)
                     {
-                        int bytesSent = await registeredSocket.SendAsync(sendBuffer, operationContext).ConfigureAwait(false);
+                        int bytesSent = await operationContext.SendAsync(sendBuffer).ConfigureAwait(false);
 
                         Console.WriteLine($"{clientId}: sent {bytesSent:N0} bytes.");
 
@@ -65,13 +65,13 @@ namespace RegisteredSocketsSample
                 {
                     Console.WriteLine($"{clientId}: receiving...");
 
-                    var operationContext = new RegisteredOperationContext();
+                    var operationContext = registeredSocket.CreateOperationContext();
                     using IMemoryOwner<byte> recvBufferOwner = bufferPool.Rent(4096);
                     Memory<byte> recvBuffer = recvBufferOwner.Memory;
 
                     while (true)
                     {
-                        int bytesReceived = await registeredSocket.ReceiveAsync(recvBuffer, operationContext).ConfigureAwait(false);
+                        int bytesReceived = await operationContext.ReceiveAsync(recvBuffer).ConfigureAwait(false);
 
                         Console.WriteLine($"{clientId}: received {bytesReceived:N0} bytes.");
 

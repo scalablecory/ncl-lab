@@ -146,7 +146,7 @@ namespace NclLab.Interop
             return s_rioReceive(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static SocketError ReceiveTo(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, IntPtr controlContext, IntPtr flagsOut, uint flags, IntPtr requestContext)
+        public static SocketError ReceiveFrom(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, IntPtr controlContext, IntPtr flagsOut, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
             return s_rioReceiveEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, controlContext, flagsOut, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();

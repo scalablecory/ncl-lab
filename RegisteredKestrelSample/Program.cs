@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
@@ -36,7 +37,7 @@ namespace RegisteredKestrelSample
         [GlobalSetup]
         public void Setup()
         {
-            _endpointUri = new Uri(new Uri($"https://{ListenHost}:{ListenPort}/"), ListenRoute);
+            _endpointUri = new Uri(new Uri($"http://{ListenHost}:{ListenPort}/"), ListenRoute);
             _client = CreateHttpClient();
             _webHost = CreateWebHost();
             _webHost.Start();
@@ -58,13 +59,15 @@ namespace RegisteredKestrelSample
         [Benchmark]
         public async Task GetSimple()
         {
-            using HttpRequestMessage req = new HttpRequestMessage();
-
-            req.Method = HttpMethod.Post;
-            req.RequestUri = _endpointUri;
-            req.Content = new StringContent("asdf", Encoding.ASCII, "application/grpc+proto");
+            using var req = new HttpRequestMessage
+            {
+                Method = HttpMethod.Post,
+                RequestUri = _endpointUri,
+                Content = new StringContent("asdf", Encoding.ASCII, "application/grpc+proto")
+            };
 
             using HttpResponseMessage res = await _client.SendAsync(req).ConfigureAwait(false);
+            await res.Content.ReadAsStringAsync().ConfigureAwait(false);
         }
 
         static HttpClient CreateHttpClient()
@@ -91,9 +94,9 @@ namespace RegisteredKestrelSample
                 .UseSetting("preventHostingStartup", "true")
                 .UseKestrel(ko =>
                 {
-                    ko.Listen(IPAddress.Loopback, ListenPort, listenOptions =>
+                    ko.Listen(Dns.GetHostAddresses(ListenHost)[0], ListenPort, listenOptions =>
                     {
-                        listenOptions.UseHttps(CreateSelfSignedCert());
+                        //listenOptions.UseHttps(CreateSelfSignedCert());
                     });
                 })
                 .ConfigureServices(services =>
@@ -139,7 +142,7 @@ namespace RegisteredKestrelSample
             Program p = new Program();
 
             p.Setup();
-            p.GetSimple().GetAwaiter().GetResult();
+            Task.Run(() => p.GetSimple()).GetAwaiter().GetResult();
             //PoorMansBenchmark(() => p.GetSimple().Wait());
             p.Cleanup();
 

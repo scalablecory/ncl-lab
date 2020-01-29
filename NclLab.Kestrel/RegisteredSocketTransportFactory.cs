@@ -34,11 +34,6 @@ namespace NclLab.Kestrel
                 socket.DualMode = true;
             }
 
-            if (_options.NoDelay)
-            {
-                socket.NoDelay = true;
-            }
-
             try
             {
                 socket.Bind(endpoint);
