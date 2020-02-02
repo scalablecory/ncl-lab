@@ -27,25 +27,19 @@ namespace NclLab.Kestrel
                 throw new NotSupportedException("EndPoint type not supported.");
             }
 
-            Socket socket = RegisteredSocket.CreateRegisterableSocket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-
-            if (ipEndPoint.Address == IPAddress.IPv6Any)
-            {
-                socket.DualMode = true;
-            }
+            var listener = new RegisteredSocketConnectionListener(_options, ipEndPoint.AddressFamily);
 
             try
             {
-                socket.Bind(endpoint);
+                listener.Bind(ipEndPoint);
             }
-            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            catch
             {
-                throw new AddressInUseException(ex.Message, ex);
+                listener.Dispose();
+                throw;
             }
 
-            socket.Listen(int.MaxValue);
-
-            return new ValueTask<IConnectionListener>(new RegisteredSocketConnectionListener(_options, socket));
+            return new ValueTask<IConnectionListener>(listener);
         }
     }
 }

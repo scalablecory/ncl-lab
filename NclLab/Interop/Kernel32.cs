@@ -7,6 +7,7 @@ namespace NclLab.Interop
 {
     internal unsafe static class Kernel32
     {
+        public const int ERROR_NOT_FOUND = 0x490;
         public const int MEM_COMMIT = 0x00001000;
         public const int MEM_RESERVE = 0x00002000;
         public const int MEM_RELEASE = 0x00008000;
@@ -17,6 +18,9 @@ namespace NclLab.Interop
 
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern bool VirtualFree(void* lpAddress, UIntPtr dwSize, uint dwFreeType);
+
+        [DllImport("kernel32.dll", ExactSpelling =  true, SetLastError = true)]
+        public static extern bool CancelIoEx(SafeHandle handle, IntPtr lpOverlapped);
 
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
         public static extern void GetSystemInfo(out SYSTEM_INFO lpSystemInfo);

@@ -23,8 +23,7 @@ namespace RegisteredSocketsSample
             {
                 int clientId = Interlocked.Increment(ref clientIds);
 
-                using Socket socket = RegisteredSocket.CreateRegisterableSocket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                using var registeredSocket = new RegisteredSocket(multiplexer, socket);
+                using var socket = new RegisteredSocket(multiplexer, AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
                 await socket.ConnectAsync(new DnsEndPoint("microsoft.com", 80));
                 Console.WriteLine($"{clientId}: connected ({socket.LocalEndPoint} -> {socket.RemoteEndPoint}).");
@@ -36,7 +35,7 @@ namespace RegisteredSocketsSample
                 {
                     Console.WriteLine($"{clientId}: sending...");
 
-                    var operationContext = registeredSocket.CreateOperationContext();
+                    var operationContext = socket.CreateOperationContext();
                     using IMemoryOwner<byte> sendBufferOwner = bufferPool.Rent(128);
                     Memory<byte> sendBuffer = sendBufferOwner.Memory;
 
@@ -65,7 +64,7 @@ namespace RegisteredSocketsSample
                 {
                     Console.WriteLine($"{clientId}: receiving...");
 
-                    var operationContext = registeredSocket.CreateOperationContext();
+                    var operationContext = socket.CreateOperationContext();
                     using IMemoryOwner<byte> recvBufferOwner = bufferPool.Rent(4096);
                     Memory<byte> recvBuffer = recvBufferOwner.Memory;
 

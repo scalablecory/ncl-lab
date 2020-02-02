@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Linq.Expressions;
+using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace NclLab.Sockets
 {
@@ -15,23 +17,61 @@ namespace NclLab.Sockets
         private static Func<Socket, ThreadPoolBoundHandle> s_GetOrAllocateThreadPoolBoundHandle;
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
         internal readonly ThreadPoolBoundHandle _boundHandle;
+        private readonly Socket _socket;
         private readonly Interop.SafeRioRequestQueueHandle _requestQueue;
         private uint _currentSendQueueSize = 1, _currentReceiveQueueSize = 1;
+
+        public EndPoint LocalEndPoint => _socket.LocalEndPoint;
+        public EndPoint RemoteEndPoint => _socket.RemoteEndPoint;
+
+        public bool NoDelay
+        {
+            get => _socket.NoDelay;
+            set => _socket.NoDelay = value;
+        }
+
+        public RegisteredSocket(RegisteredMultiplexer multiplexer, AddressFamily family, SocketType socketType, ProtocolType protocolType)
+        {
+            Socket socket = CreateRegisterableSocket(family, socketType, protocolType);
+
+            try
+            {
+                _boundHandle = GetOrAllocateThreadPoolBoundHandle(socket);
+                _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
+                _socket = socket;
+            }
+            catch
+            {
+                socket.Dispose();
+            }
+        }
 
         /// <summary>
         /// Registers a socket against a multiplexer.
         /// </summary>
         /// <param name="multiplexer">The multiplexer to register a socket with.</param>
         /// <param name="socket">The socket to register. Must have been created using <see cref="CreateRegisterableSocket(AddressFamily, SocketType, ProtocolType)"/>.</param>
-        public RegisteredSocket(RegisteredMultiplexer multiplexer, Socket socket)
+        internal RegisteredSocket(RegisteredMultiplexer multiplexer, Socket socket)
         {
             _boundHandle = GetOrAllocateThreadPoolBoundHandle(socket);
             _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
+            _socket = socket;
         }
 
         public void Dispose()
         {
             _requestQueue.Dispose();
+            _socket.Dispose();
+        }
+
+        public Task ConnectAsync(EndPoint endPoint)
+        {
+            return _socket.ConnectAsync(endPoint);
+        }
+
+        public void Shutdown(SocketShutdown how)
+        {
+            _socket.Shutdown(how);
         }
 
         public RegisteredOperationContext CreateOperationContext()
@@ -131,7 +171,7 @@ namespace NclLab.Sockets
             _currentSendQueueSize = newSendQueueSize;
         }
 
-        public static Socket CreateRegisterableSocket(AddressFamily family, SocketType socketType, ProtocolType protocolType)
+        internal static Socket CreateRegisterableSocket(AddressFamily family, SocketType socketType, ProtocolType protocolType)
         {
             Interop.Rio.Init();
 

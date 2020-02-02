@@ -14,28 +14,31 @@ using System.Threading.Tasks.Sources;
 
 namespace NclLab.Kestrel
 {
-    internal sealed class RegisteredSocketConnectionListener : SocketAsyncEventArgs, IConnectionListener, IValueTaskSource
+    internal sealed class RegisteredSocketConnectionListener : IConnectionListener, IDisposable
     {
         readonly RegisteredMultiplexer _multiplexer = new RegisteredMultiplexer();
         readonly RegisteredMemoryPool _pool = new RegisteredMemoryPool();
         readonly SocketTransportOptions _options;
-        readonly Socket _listenSocket;
-        ManualResetValueTaskSourceCore<bool> _valueTaskSource;
+        readonly RegisteredSocketListener _listener;
 
-        public EndPoint EndPoint => _listenSocket.LocalEndPoint;
+        public EndPoint EndPoint => _listener.LocalEndPoint;
 
-        public RegisteredSocketConnectionListener(SocketTransportOptions options, Socket socket)
+        public RegisteredSocketConnectionListener(SocketTransportOptions options, AddressFamily addressFamily)
         {
             _options = options;
-            _listenSocket = socket;
+            _listener = new RegisteredSocketListener(_multiplexer, addressFamily, SocketType.Stream, ProtocolType.Tcp);
+        }
+
+        public void Dispose()
+        {
+            _listener.Dispose();
+            _multiplexer.Dispose();
+            _pool.Dispose();
         }
 
         public ValueTask DisposeAsync()
         {
-            _listenSocket.Dispose();
-            _multiplexer.Dispose();
-            _pool.Dispose();
-            base.Dispose();
+            Dispose();
             return default;
         }
 
@@ -45,26 +48,16 @@ namespace NclLab.Kestrel
 
             while (true)
             {
-                _valueTaskSource.Reset();
-
                 try
                 {
-                    AcceptSocket = RegisteredSocket.CreateRegisterableSocket(af, SocketType.Stream, ProtocolType.Tcp);
+                    RegisteredSocket acceptSocket = await _listener.Accept();
 
-                    if (_options?.NoDelay == true)
+                    if (_options.NoDelay == true)
                     {
-                        AcceptSocket.NoDelay = true;
+                        acceptSocket.NoDelay = true;
                     }
 
-                    if (_listenSocket.AcceptAsync(this))
-                    {
-                        await new ValueTask(this, _valueTaskSource.Version);
-                    }
-
-                    var con = new RegisteredSocketConnection(_multiplexer, _pool, AcceptSocket, _options?.MaxReadBufferSize, _options?.MaxWriteBufferSize);
-                    AcceptSocket = null;
-
-                    return con;
+                    return new RegisteredSocketConnection(_pool, acceptSocket, _options?.MaxReadBufferSize, _options?.MaxWriteBufferSize);
                 }
                 catch (ObjectDisposedException)
                 {
@@ -78,48 +71,32 @@ namespace NclLab.Kestrel
                 {
                     continue;
                 }
-                finally
-                {
-                    if (AcceptSocket != null)
-                    {
-                        AcceptSocket.Dispose();
-                        AcceptSocket = null;
-                    }
-                }
             }
+        }
+
+        public void Bind(IPEndPoint endPoint)
+        {
+            if (endPoint.Address == IPAddress.IPv6Any)
+            {
+                _listener.DualMode = true;
+            }
+
+            try
+            {
+                _listener.Bind(endPoint);
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                throw new AddressInUseException(ex.Message, ex);
+            }
+
+            _listener.Listen(int.MaxValue);
         }
 
         public ValueTask UnbindAsync(CancellationToken cancellationToken = default)
         {
-            _listenSocket.Dispose();
+            _listener.Dispose();
             return default;
-        }
-
-        protected override void OnCompleted(SocketAsyncEventArgs e)
-        {
-            if (e.SocketError == SocketError.Success)
-            {
-                _valueTaskSource.SetResult(false);
-            }
-            else
-            {
-                _valueTaskSource.SetException(new SocketException((int)e.SocketError));
-            }
-        }
-
-        void IValueTaskSource.GetResult(short token)
-        {
-            _valueTaskSource.GetResult(token);
-        }
-
-        ValueTaskSourceStatus IValueTaskSource.GetStatus(short token)
-        {
-            return _valueTaskSource.GetStatus(token);
-        }
-
-        void IValueTaskSource.OnCompleted(Action<object> continuation, object state, short token, ValueTaskSourceOnCompletedFlags flags)
-        {
-            _valueTaskSource.OnCompleted(continuation, state, token, flags);
         }
     }
 }

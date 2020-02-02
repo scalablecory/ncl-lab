@@ -1,4 +1,5 @@
 using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
@@ -31,6 +32,15 @@ namespace RegisteredKestrelSample
         HttpClient _client;
         IWebHost _webHost;
 
+        [Params(100, 1000)]
+        public int Concurrency;
+
+        [Params(10000)]
+        public int RequestCount;
+
+        [Params(false, true)]
+        public bool Registered;
+
         [GlobalSetup]
         public void Setup()
         {
@@ -54,7 +64,19 @@ namespace RegisteredKestrelSample
         }
 
         [Benchmark]
-        public async Task GetSimple()
+        public async Task Post()
+        {
+            Task[] tasks = new Task[RequestCount];
+
+            for (int i = 0; i < RequestCount; ++i)
+            {
+                tasks[i] = PostOne();
+            }
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+
+        async Task PostOne()
         {
             using var req = new HttpRequestMessage
             {
@@ -67,9 +89,10 @@ namespace RegisteredKestrelSample
             await res.Content.ReadAsStringAsync().ConfigureAwait(false);
         }
 
-        static HttpClient CreateHttpClient()
+        HttpClient CreateHttpClient()
         {
             var handler = new SocketsHttpHandler();
+            handler.MaxConnectionsPerServer = Concurrency;
             handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
             {
                 RemoteCertificateValidationCallback = delegate { return true; }
@@ -84,7 +107,7 @@ namespace RegisteredKestrelSample
             return client;
         }
 
-        static IWebHost CreateWebHost()
+        IWebHost CreateWebHost()
         {
             return
                 WebHost.CreateDefaultBuilder()
@@ -98,12 +121,12 @@ namespace RegisteredKestrelSample
                 })
                 .ConfigureServices(services =>
                 {
-                    services.AddSingleton<IConnectionListenerFactory, RegisteredSocketTransportFactory>();
+                    if(Registered) services.AddSingleton<IConnectionListenerFactory, RegisteredSocketTransportFactory>();
                 })
                 .ConfigureLogging(logging =>
                 {
-                    //logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-                    logging.AddFilter("Microsoft.AspNetCore", LogLevel.Trace);
+                    logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+                    //logging.AddFilter("Microsoft.AspNetCore", LogLevel.Trace);
                 })
                 .Configure(app =>
                 {
@@ -138,86 +161,14 @@ namespace RegisteredKestrelSample
         {
             var p = new Program();
 
+            p.Registered = true;
+            p.RequestCount = 1000;
+            p.Concurrency = 100;
             p.Setup();
-            p.GetSimple().GetAwaiter().GetResult();
-            //PoorMansBenchmark(() => p.GetSimple().Wait());
+            p.PostOne().GetAwaiter().GetResult();
             p.Cleanup();
 
             //BenchmarkRunner.Run<Program>();
-        }
-
-        static void PoorMansBenchmark(Action action)
-        {
-            Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.High;
-            Stopwatch sw = Stopwatch.StartNew();
-
-            // Warmup.
-            do
-            {
-                action();
-            }
-            while (sw.ElapsedMilliseconds < 1000);
-
-            // Get number of loops to execute, targeting ~1s of execution for each run.
-            int loops = 0;
-            do
-            {
-                ++loops;
-                action();
-            }
-            while (sw.ElapsedMilliseconds < 2000);
-
-            Console.WriteLine($"Using {loops:N0} loops");
-
-            // Keep running until we get 10 runs with no observed speed improvement.
-            // Prints + when an improvement is seen, otherwise -
-            long bestTicks = long.MaxValue;
-            int runCount = 0;
-
-            while (runCount < 10)
-            {
-                long start = Stopwatch.GetTimestamp();
-
-                for (int i = 0; i < loops; ++i)
-                {
-                    action();
-                }
-
-                long end = Stopwatch.GetTimestamp();
-                long curTicks = end - start;
-
-                if (curTicks < bestTicks)
-                {
-                    bestTicks = curTicks;
-                    runCount = 0;
-                    Console.Write('+');
-                }
-                else
-                {
-                    ++runCount;
-                    Console.Write('-');
-                }
-            }
-
-            // Report out our best time.
-            double opsPerSecond = (loops * Stopwatch.Frequency) / (double)bestTicks;
-            double opTime = 1.0 / opsPerSecond;
-            string timeUnit = "s";
-
-            if (opTime < 1.0)
-            {
-                opTime *= 1000.0;
-                timeUnit = "ms";
-
-                if (opTime < 10)
-                {
-                    opTime *= 1000.0;
-                    timeUnit = "us";
-                }
-            }
-
-            Console.WriteLine();
-            Console.WriteLine($"Speed: {opTime:N1} {timeUnit} ({opsPerSecond:N1} reqs/s)");
         }
     }
 }
