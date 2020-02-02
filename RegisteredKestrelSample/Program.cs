@@ -1,12 +1,9 @@
 using BenchmarkDotNet.Attributes;
-using BenchmarkDotNet.Running;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -114,7 +111,7 @@ namespace RegisteredKestrelSample
                     {
                         routes.MapPost(ListenRoute, async ctx =>
                         {
-                            await ctx.Response.WriteAsync("ok").ConfigureAwait(false);
+                            await ctx.Response.WriteAsync("Hello, World.").ConfigureAwait(false);
                         });
                     });
                 })
@@ -139,10 +136,10 @@ namespace RegisteredKestrelSample
 
         public static void Main(string[] args)
         {
-            Program p = new Program();
+            var p = new Program();
 
             p.Setup();
-            Task.Run(() => p.GetSimple()).GetAwaiter().GetResult();
+            p.GetSimple().GetAwaiter().GetResult();
             //PoorMansBenchmark(() => p.GetSimple().Wait());
             p.Cleanup();
 

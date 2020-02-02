@@ -135,7 +135,7 @@ namespace NclLab.Sockets
         {
             Interop.Rio.Init();
 
-            SafeSocketHandle socketHandle = Interop.Rio.CreateRegisterableSocket((int)family, (int)socketType, (int)protocolType);
+            SafeSocketHandle socketHandle = Interop.Winsock.CreateRegisterableSocket((int)family, (int)socketType, (int)protocolType);
 
             return s_createRegisterableSocket != null ? s_createRegisterableSocket(socketHandle, family, socketType, protocolType) : SlowPath(socketHandle, family, socketType, protocolType);
 

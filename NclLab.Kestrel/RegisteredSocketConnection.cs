@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using NclLab.Sockets;
 using System;
 using System.Buffers;
@@ -9,7 +10,6 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Pipelines;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -27,29 +27,39 @@ namespace NclLab.Kestrel
         private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private Exception _shutdownReason;
 
-        public RegisteredSocketConnection(RegisteredMemoryPool memoryPool, Socket socket, RegisteredSocket registeredSocket)
+        public RegisteredSocketConnection(RegisteredMultiplexer multiplexer, RegisteredMemoryPool memoryPool, Socket socket, long? maxReadBufferSize, long? maxWriteBufferSize)
         {
-            _features.Add(typeof(IConnectionIdFeature), this);
-            _features.Add(typeof(IConnectionTransportFeature), this);
-            _features.Add(typeof(IConnectionItemsFeature), this);
-            _features.Add(typeof(IMemoryPoolFeature), this);
-            _features.Add(typeof(IConnectionLifetimeFeature), this);
+            try
+            {
+                _features.Add(typeof(IConnectionIdFeature), this);
+                _features.Add(typeof(IConnectionTransportFeature), this);
+                _features.Add(typeof(IConnectionItemsFeature), this);
+                _features.Add(typeof(IMemoryPoolFeature), this);
+                _features.Add(typeof(IConnectionLifetimeFeature), this);
 
-            _socket = socket;
-            _registeredSocket = registeredSocket;
-            ConnectionClosed = _cancellationTokenSource.Token;
-            LocalEndPoint = socket.LocalEndPoint;
-            RemoteEndPoint = socket.RemoteEndPoint;
+                _socket = socket;
+                _registeredSocket = new RegisteredSocket(multiplexer, socket);
+                ConnectionClosed = _cancellationTokenSource.Token;
+                LocalEndPoint = socket.LocalEndPoint;
+                RemoteEndPoint = socket.RemoteEndPoint;
 
-            var pipeOptions = new PipeOptions(pool: memoryPool, useSynchronizationContext: false);
-            var x = new Pipe(pipeOptions);
-            var y = new Pipe(pipeOptions);
+                var inputPipeOptions = new PipeOptions(pool: memoryPool, pauseWriterThreshold: maxReadBufferSize.GetValueOrDefault(), resumeWriterThreshold: maxReadBufferSize.GetValueOrDefault() / 2, useSynchronizationContext: false);
+                var inputPipe = new Pipe(inputPipeOptions);
 
-            (_transportInput, _transportOutput) = (x.Reader, y.Writer);
-            (_socketInput, _socketOutput) = (y.Reader, x.Writer);
-            Transport = this;
+                var outputPipeOptions = new PipeOptions(pool: memoryPool, pauseWriterThreshold: maxWriteBufferSize.GetValueOrDefault(), resumeWriterThreshold: maxWriteBufferSize.GetValueOrDefault() / 2, useSynchronizationContext: false);
+                var outputPipe = new Pipe(outputPipeOptions);
 
-            _ioTask = Task.WhenAll(DoReceiveAsync(), DoSendAsync());
+                (_transportInput, _transportOutput) = (inputPipe.Reader, outputPipe.Writer);
+                (_socketInput, _socketOutput) = (outputPipe.Reader, inputPipe.Writer);
+                Transport = this;
+
+                _ioTask = Task.WhenAll(DoReceiveAsync(), DoSendAsync());
+            }
+            catch
+            {
+                _registeredSocket?.Dispose();
+                throw;
+            }
         }
 
         public override async ValueTask DisposeAsync()

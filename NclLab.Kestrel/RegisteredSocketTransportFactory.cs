@@ -27,7 +27,7 @@ namespace NclLab.Kestrel
                 throw new NotSupportedException("EndPoint type not supported.");
             }
 
-            Socket socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+            Socket socket = RegisteredSocket.CreateRegisterableSocket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
             if (ipEndPoint.Address == IPAddress.IPv6Any)
             {

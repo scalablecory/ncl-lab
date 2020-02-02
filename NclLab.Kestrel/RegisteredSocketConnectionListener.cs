@@ -10,15 +10,17 @@ using NclLab.Sockets;
 using System.Net.Sockets;
 using System.Buffers;
 using System.Diagnostics;
+using System.Threading.Tasks.Sources;
 
 namespace NclLab.Kestrel
 {
-    internal sealed class RegisteredSocketConnectionListener : IConnectionListener
+    internal sealed class RegisteredSocketConnectionListener : SocketAsyncEventArgs, IConnectionListener, IValueTaskSource
     {
         readonly RegisteredMultiplexer _multiplexer = new RegisteredMultiplexer();
         readonly RegisteredMemoryPool _pool = new RegisteredMemoryPool();
         readonly SocketTransportOptions _options;
         readonly Socket _listenSocket;
+        ManualResetValueTaskSourceCore<bool> _valueTaskSource;
 
         public EndPoint EndPoint => _listenSocket.LocalEndPoint;
 
@@ -33,6 +35,7 @@ namespace NclLab.Kestrel
             _listenSocket.Dispose();
             _multiplexer.Dispose();
             _pool.Dispose();
+            base.Dispose();
             return default;
         }
 
@@ -42,23 +45,24 @@ namespace NclLab.Kestrel
 
             while (true)
             {
-                Socket acceptSocket = null;
+                _valueTaskSource.Reset();
 
                 try
                 {
-                    acceptSocket = RegisteredSocket.CreateRegisterableSocket(af, SocketType.Stream, ProtocolType.Tcp);
+                    AcceptSocket = RegisteredSocket.CreateRegisterableSocket(af, SocketType.Stream, ProtocolType.Tcp);
 
-                    if (_options.NoDelay)
+                    if (_options?.NoDelay == true)
                     {
-                        acceptSocket.NoDelay = true;
+                        AcceptSocket.NoDelay = true;
                     }
 
-                    Socket newsocket = await _listenSocket.AcceptAsync(acceptSocket);
-                    Debug.Assert(newsocket == acceptSocket);
+                    if (_listenSocket.AcceptAsync(this))
+                    {
+                        await new ValueTask(this, _valueTaskSource.Version);
+                    }
 
-                    var registeredSocket = new RegisteredSocket(_multiplexer, acceptSocket);
-                    var con = new RegisteredSocketConnection(_pool, acceptSocket, registeredSocket);
-                    acceptSocket = null;
+                    var con = new RegisteredSocketConnection(_multiplexer, _pool, AcceptSocket, _options?.MaxReadBufferSize, _options?.MaxWriteBufferSize);
+                    AcceptSocket = null;
 
                     return con;
                 }
@@ -76,7 +80,11 @@ namespace NclLab.Kestrel
                 }
                 finally
                 {
-                    acceptSocket?.Dispose();
+                    if (AcceptSocket != null)
+                    {
+                        AcceptSocket.Dispose();
+                        AcceptSocket = null;
+                    }
                 }
             }
         }
@@ -85,6 +93,33 @@ namespace NclLab.Kestrel
         {
             _listenSocket.Dispose();
             return default;
+        }
+
+        protected override void OnCompleted(SocketAsyncEventArgs e)
+        {
+            if (e.SocketError == SocketError.Success)
+            {
+                _valueTaskSource.SetResult(false);
+            }
+            else
+            {
+                _valueTaskSource.SetException(new SocketException((int)e.SocketError));
+            }
+        }
+
+        void IValueTaskSource.GetResult(short token)
+        {
+            _valueTaskSource.GetResult(token);
+        }
+
+        ValueTaskSourceStatus IValueTaskSource.GetStatus(short token)
+        {
+            return _valueTaskSource.GetStatus(token);
+        }
+
+        void IValueTaskSource.OnCompleted(Action<object> continuation, object state, short token, ValueTaskSourceOnCompletedFlags flags)
+        {
+            _valueTaskSource.OnCompleted(continuation, state, token, flags);
         }
     }
 }

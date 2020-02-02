@@ -12,9 +12,6 @@ namespace NclLab.Interop
         private const int RIO_CORRUPT_CQ = -1;
         private const int RIO_EVENT_COMPLETION = 1;
         private const int SIO_GET_MULTIPLE_EXTENSION_FUNCTION_POINTER = unchecked((int)0xC8000024);
-        private const int WSA_FLAG_OVERLAPPED = 0x01;
-        private const int WSA_FLAG_NO_HANDLE_INHERIT = 0x80;
-        private const int WSA_FLAG_REGISTERED_IO = 0x100;
 
         private static bool s_init;
         private static RIOSend s_rioSend;
@@ -151,16 +148,6 @@ namespace NclLab.Interop
             Debug.Assert(!queue.IsInvalid);
             return s_rioReceiveEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, controlContext, flagsOut, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
-
-        public static SafeSocketHandle CreateRegisterableSocket(int af, int type, int protocol)
-        {
-            SafeSocketHandle handle = WSASocketW(af, type, protocol, IntPtr.Zero, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT | WSA_FLAG_REGISTERED_IO);
-            if (handle.IsInvalid) throw new SocketException();
-            return handle;
-        }
-
-        [DllImport("ws2_32.dll", CallingConvention = CallingConvention.StdCall, ExactSpelling = true, SetLastError = true)]
-        private static extern SafeSocketHandle WSASocketW(int af, int type, int protocol, IntPtr lpProtocolInfo, uint g, uint flags);
 
         public static void Init()
         {
