@@ -35,7 +35,7 @@ namespace RegisteredKestrelSample
         [Params(100, 1000)]
         public int Concurrency;
 
-        [Params(10000)]
+        [Params(100000)]
         public int RequestCount;
 
         [Params(false, true)]
@@ -161,14 +161,14 @@ namespace RegisteredKestrelSample
         {
             var p = new Program();
 
-            p.Registered = true;
-            p.RequestCount = 1000;
-            p.Concurrency = 100;
-            p.Setup();
-            p.PostOne().GetAwaiter().GetResult();
-            p.Cleanup();
+            //p.Registered = true;
+            //p.RequestCount = 100;
+            //p.Concurrency = 1;
+            //p.Setup();
+            //p.Post().GetAwaiter().GetResult();
+            //p.Cleanup();
 
-            //BenchmarkRunner.Run<Program>();
+            BenchmarkRunner.Run<Program>();
         }
     }
 }

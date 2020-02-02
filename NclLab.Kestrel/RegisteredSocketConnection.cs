@@ -1,7 +1,6 @@
 ﻿using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Http.Features;
-using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using NclLab.Sockets;
 using System;
 using System.Buffers;
@@ -149,7 +148,8 @@ namespace NclLab.Kestrel
 
                 while (true)
                 {
-                    int bytesReceived = await operationContext.ReceiveAsync(_socketOutput.GetMemory());
+                    Memory<byte> memory = _socketOutput.GetMemory();
+                    int bytesReceived = await operationContext.ReceiveAsync(memory);
 
                     if (bytesReceived == 0)
                     {
