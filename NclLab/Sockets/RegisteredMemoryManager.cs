@@ -60,7 +60,6 @@ namespace NclLab.Sockets
                 _ptr = null;
 
                 GC.RemoveMemoryPressure(_len);
-                if(disposing) GC.SuppressFinalize(this);
             }
         }
 
@@ -74,7 +73,7 @@ namespace NclLab.Sockets
         {
             if (_ptr == null) throw new ObjectDisposedException(nameof(RegisteredMemoryManager));
             if (elementIndex >= _len) throw new ArgumentOutOfRangeException(nameof(elementIndex));
-            return new MemoryHandle((byte*)_ptr + elementIndex, pinnable: this);
+            return new MemoryHandle((byte*)_ptr + elementIndex);
         }
 
         public override void Unpin()
