@@ -1,16 +1,11 @@
 ﻿using Microsoft.AspNetCore.Connections;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using System.Net;
-using System.Threading;
 using Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets;
 using NclLab.Sockets;
+using System;
+using System.Net;
 using System.Net.Sockets;
-using System.Buffers;
-using System.Diagnostics;
-using System.Threading.Tasks.Sources;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace NclLab.Kestrel
 {

@@ -68,7 +68,7 @@ namespace NclLab.Kestrel
 
             try
             {
-                RegisteredOperationContext operationContext = _socket.CreateOperationContext();
+                using RegisteredOperationContext operationContext = _socket.CreateOperationContext();
                 var sendBuffers = new ReadOnlyMemory<byte>[1];
 
                 while (true)
@@ -144,7 +144,7 @@ namespace NclLab.Kestrel
 
             try
             {
-                RegisteredOperationContext operationContext = _socket.CreateOperationContext();
+                using RegisteredOperationContext operationContext = _socket.CreateOperationContext();
 
                 while (true)
                 {

@@ -12,7 +12,7 @@ namespace NclLab.Sockets
     /// <summary>
     /// Context for an async operation. Should be reused across multiple I/Os. Not concurrently.
     /// </summary>
-    public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>
+    public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>, IDisposable
     {
         private readonly RegisteredSocket _socket;
         private Interop.Rio.RIO_BUF[] _buffers = new Interop.Rio.RIO_BUF[1];
@@ -30,6 +30,11 @@ namespace NclLab.Sockets
             _socket = socket;
             _preallocatedOverlapped = new PreAllocatedOverlapped(delegate { }, _thisRef, null);
             _valueTaskSource.RunContinuationsAsynchronously = true;
+        }
+
+        public void Dispose()
+        {
+            _preallocatedOverlapped.Dispose();
         }
 
         public ValueTask<int> SendAsync(ReadOnlyMemory<byte> memory)
@@ -169,8 +174,8 @@ namespace NclLab.Sockets
         {
             if (_buffers.Length < bufferCount)
             {
-                Array.Resize(ref _rioBuffers, bufferCount);
-                Array.Resize(ref _buffers, bufferCount);
+                _rioBuffers = new RegisteredMemoryManager[bufferCount];
+                _buffers = new Interop.Rio.RIO_BUF[bufferCount];
             }
         }
 
@@ -205,6 +210,11 @@ namespace NclLab.Sockets
             _socket._boundHandle.FreeNativeOverlapped(_overlapped);
             _overlapped = null;
             _thisRef.Value = null;
+
+            for (int i = 0; i < _rioBuffers.Length; ++i)
+            {
+                _rioBuffers[i] = null;
+            }
         }
 
         private void Complete(int transferred)

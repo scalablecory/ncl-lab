@@ -11,7 +11,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NclLab.Kestrel;
 using System;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
