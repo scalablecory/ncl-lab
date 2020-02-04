@@ -11,12 +11,15 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NclLab.Kestrel;
 using System;
+using System.Collections;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace RegisteredKestrelSample
@@ -31,7 +34,7 @@ namespace RegisteredKestrelSample
         HttpClient _client;
         IWebHost _webHost;
 
-        [Params(500)]
+        [Params(100)]
         public int Concurrency;
 
         [Params(50000)]
@@ -43,7 +46,7 @@ namespace RegisteredKestrelSample
         [GlobalSetup]
         public void Setup()
         {
-            _endpointUri = new Uri(new Uri($"http://{ListenHost}:{ListenPort}/"), ListenRoute);
+            _endpointUri = new Uri(new Uri($"https://{ListenHost}:{ListenPort}/"), ListenRoute);
             _client = CreateHttpClient();
             _webHost = CreateWebHost();
             _webHost.Start();
@@ -65,33 +68,42 @@ namespace RegisteredKestrelSample
         [Benchmark]
         public async Task Post()
         {
+            using var semaphore = new SemaphoreSlim(Concurrency);
             Task[] tasks = new Task[RequestCount];
 
             for (int i = 0; i < RequestCount; ++i)
             {
-                tasks[i] = PostOne();
+                tasks[i] = PostOne(semaphore);
             }
 
             await Task.WhenAll(tasks).ConfigureAwait(false);
         }
 
-        async Task PostOne()
+        async Task PostOne(SemaphoreSlim semaphore)
         {
-            using var req = new HttpRequestMessage
+            await semaphore.WaitAsync().ConfigureAwait(false);
+            try
             {
-                Method = HttpMethod.Post,
-                RequestUri = _endpointUri,
-                Content = new StringContent("asdf", Encoding.ASCII, "application/grpc+proto")
-            };
+                using var req = new HttpRequestMessage
+                {
+                    Method = HttpMethod.Post,
+                    RequestUri = _endpointUri,
+                    Version = HttpVersion.Version20,
+                    Content = new StringContent("asdf", Encoding.ASCII, "application/grpc+proto")
+                };
 
-            using HttpResponseMessage res = await _client.SendAsync(req).ConfigureAwait(false);
-            await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+                using HttpResponseMessage res = await _client.SendAsync(req).ConfigureAwait(false);
+                await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
         }
 
         HttpClient CreateHttpClient()
         {
             var handler = new SocketsHttpHandler();
-            handler.MaxConnectionsPerServer = Concurrency;
             handler.SslOptions = new System.Net.Security.SslClientAuthenticationOptions
             {
                 RemoteCertificateValidationCallback = delegate { return true; }
@@ -115,7 +127,7 @@ namespace RegisteredKestrelSample
                 {
                     ko.Listen(Dns.GetHostAddresses(ListenHost)[0], ListenPort, listenOptions =>
                     {
-                        //listenOptions.UseHttps(CreateSelfSignedCert());
+                        listenOptions.UseHttps(CreateSelfSignedCert());
                     });
                 })
                 .ConfigureServices(services =>
@@ -164,11 +176,10 @@ namespace RegisteredKestrelSample
             //var p = new Program();
 
             //p.Registered = true;
-            //p.RequestCount = 10000;
-            //p.Concurrency = 1;
+            //p.RequestCount = 1000;
             //p.Setup();
-            ////p.PostOne().GetAwaiter().GetResult();
             //p.Post().GetAwaiter().GetResult();
+            ////p.PostOne(new SemaphoreSlim(1)).GetAwaiter().GetResult();
             //p.Cleanup();
 
             BenchmarkRunner.Run<Program>();

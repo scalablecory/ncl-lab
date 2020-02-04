@@ -93,12 +93,12 @@ namespace NclLab.Interop
             }
         }
 
-        public static SafeRioRequestQueueHandle CreateRequestQueue(SafeSocketHandle socket, SafeRioCompletionQueueHandle completionQueue, IntPtr context, uint maxOutstandingReceive, uint maxReceiveDataBuffers, uint maxOutstandingSend, uint maxSendDataBuffers)
+        public static SafeRioRequestQueueHandle CreateRequestQueue(SafeSocketHandle socket, SafeRioCompletionQueueHandle completionQueue, IntPtr context, uint maxOutstandingReceive, uint maxOutstandingSend)
         {
             Debug.Assert(!socket.IsInvalid);
             Debug.Assert(!completionQueue.IsInvalid);
 
-            SafeRioRequestQueueHandle queue = s_rioCreateRequestQueue(socket, maxOutstandingReceive, maxReceiveDataBuffers, maxOutstandingSend, maxSendDataBuffers, completionQueue, completionQueue, context);
+            SafeRioRequestQueueHandle queue = s_rioCreateRequestQueue(socket, maxOutstandingReceive, MaxReceiveDataBuffers: 1, maxOutstandingSend, MaxSendDataBuffers: 1, completionQueue, completionQueue, context);
             if (queue.IsInvalid) throw new SocketException();
 
             queue.SetDependencies(socket, completionQueue);
@@ -125,28 +125,28 @@ namespace NclLab.Interop
             return res;
         }
 
-        public static SocketError Send(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Send(SafeRioRequestQueueHandle queue, IntPtr buffers, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-            return s_rioSend(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioSend(queue, buffers, DataBufferCount: 1, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static SocketError SendTo(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, uint flags, IntPtr requestContext)
+        public static SocketError SendTo(SafeRioRequestQueueHandle queue, IntPtr buffers, IntPtr remoteAddress, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-            return s_rioSendEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, IntPtr.Zero, IntPtr.Zero, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioSendEx(queue, buffers, DataBufferCount: 1, IntPtr.Zero, remoteAddress, IntPtr.Zero, IntPtr.Zero, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static SocketError Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, uint flags, IntPtr requestContext)
+        public static SocketError Receive(SafeRioRequestQueueHandle queue, IntPtr buffers, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-            return s_rioReceive(queue, buffers, bufferCount, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioReceive(queue, buffers, DataBufferCount: 1, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
-        public static SocketError ReceiveFrom(SafeRioRequestQueueHandle queue, IntPtr buffers, int bufferCount, IntPtr remoteAddress, IntPtr controlContext, IntPtr flagsOut, uint flags, IntPtr requestContext)
+        public static SocketError ReceiveFrom(SafeRioRequestQueueHandle queue, IntPtr buffers, IntPtr remoteAddress, IntPtr controlContext, IntPtr flagsOut, uint flags, IntPtr requestContext)
         {
             Debug.Assert(!queue.IsInvalid);
-            return s_rioReceiveEx(queue, buffers, bufferCount, IntPtr.Zero, remoteAddress, controlContext, flagsOut, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
+            return s_rioReceiveEx(queue, buffers, DataBufferCount: 1, IntPtr.Zero, remoteAddress, controlContext, flagsOut, flags, requestContext) ? SocketError.Success : (SocketError)Marshal.GetLastWin32Error();
         }
 
         public static void Init()

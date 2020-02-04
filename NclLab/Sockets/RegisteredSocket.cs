@@ -15,12 +15,16 @@ namespace NclLab.Sockets
     public sealed class RegisteredSocket : IDisposable
     {
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
+        private readonly RegisteredMultiplexer _multiplexer;
         private readonly Socket _socket;
         private readonly Interop.SafeRioRequestQueueHandle _requestQueue;
         private uint _currentSendQueueSize = 1, _currentReceiveQueueSize = 1;
 
         public EndPoint LocalEndPoint => _socket.LocalEndPoint;
         public EndPoint RemoteEndPoint => _socket.RemoteEndPoint;
+        public AddressFamily AddressFamily => _socket.AddressFamily;
+        public SocketType SocketType => _socket.SocketType;
+        public ProtocolType ProtocolType => _socket.ProtocolType;
 
         public bool NoDelay
         {
@@ -36,6 +40,7 @@ namespace NclLab.Sockets
             {
                 _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
                 _socket = socket;
+                _multiplexer = multiplexer;
             }
             catch
             {
@@ -75,94 +80,107 @@ namespace NclLab.Sockets
             return new RegisteredOperationContext(this);
         }
 
-        internal SocketError StartSend(IntPtr buffersPtr, int bufferCount, IntPtr requestContext)
+        internal SocketError StartSend(IntPtr buffersPtr, IntPtr requestContext)
         {
             lock (_requestQueue)
             {
                 while (true)
                 {
-                    SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, bufferCount, flags: 0, requestContext);
+                    SocketError err = Interop.Rio.Send(_requestQueue, buffersPtr, flags: 0, requestContext);
                     
                     if (err != SocketError.NoBufferSpaceAvailable)
                     {
                         return err;
                     }
 
-                    ResizeSendQueue();
+                    GrowSendQueueUnlocked();
                 }
             }
         }
 
-        internal SocketError StartSendTo(IntPtr buffersPtr, int bufferCount, IntPtr remoteAddressPtr, IntPtr requestContext)
+        internal SocketError StartSendTo(IntPtr buffersPtr, IntPtr remoteAddressPtr, IntPtr requestContext)
         {
             lock (_requestQueue)
             {
                 while (true)
                 {
-                    SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, bufferCount, remoteAddressPtr, flags: 0, requestContext);
+                    SocketError err = Interop.Rio.SendTo(_requestQueue, buffersPtr, remoteAddressPtr, flags: 0, requestContext);
                     
                     if (err != SocketError.NoBufferSpaceAvailable)
                     {
                         return err;
                     }
 
-                    ResizeSendQueue();
+                    GrowSendQueueUnlocked();
                 }
             }
         }
 
-        internal SocketError StartReceive(IntPtr buffersPtr, int bufferCount, IntPtr requestContext)
+        internal SocketError StartReceive(IntPtr buffersPtr, IntPtr requestContext)
         {
             lock (_requestQueue)
             {
                 while (true)
                 {
-                    SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, bufferCount, flags: 0, requestContext);
+                    SocketError err = Interop.Rio.Receive(_requestQueue, buffersPtr, flags: 0, requestContext);
 
                     if (err != SocketError.NoBufferSpaceAvailable)
                     {
                         return err;
                     }
 
-                    ResizeReceiveQueue();
+                    GrowReceiveQueueUnlocked();
                 }
             }
         }
 
-        internal SocketError StartReceiveFrom(IntPtr buffersPtr, int bufferCount, IntPtr remoteAddressPtr, IntPtr requestContext)
+        internal SocketError StartReceiveFrom(IntPtr buffersPtr, IntPtr remoteAddressPtr, IntPtr requestContext)
         {
             lock (_requestQueue)
             {
                 while (true)
                 {
-                    SocketError err = Interop.Rio.ReceiveFrom(_requestQueue, buffersPtr, bufferCount, remoteAddressPtr, IntPtr.Zero, IntPtr.Zero, flags: 0, requestContext);
+                    SocketError err = Interop.Rio.ReceiveFrom(_requestQueue, buffersPtr, remoteAddressPtr, IntPtr.Zero, IntPtr.Zero, flags: 0, requestContext);
 
                     if (err != SocketError.NoBufferSpaceAvailable)
                     {
                         return err;
                     }
 
-                    ResizeReceiveQueue();
+                    GrowReceiveQueueUnlocked();
                 }
             }
         }
 
-        private void ResizeSendQueue()
+        private void GrowSendQueueUnlocked()
         {
             Debug.Assert(Monitor.IsEntered(_requestQueue));
-            ResizeRequestQueue(_currentReceiveQueueSize, _currentSendQueueSize * 2);
+            ResizeRequestQueueUnlocked(_currentReceiveQueueSize, checked(_currentSendQueueSize * 2));
         }
 
-        private void ResizeReceiveQueue()
+        private void GrowReceiveQueueUnlocked()
         {
             Debug.Assert(Monitor.IsEntered(_requestQueue));
-            ResizeRequestQueue(_currentReceiveQueueSize * 2, _currentSendQueueSize);
+            ResizeRequestQueueUnlocked(checked(_currentReceiveQueueSize * 2), _currentSendQueueSize);
         }
 
-        private void ResizeRequestQueue(uint newReceiveQueueSize, uint newSendQueueSize)
+        private void ResizeRequestQueueUnlocked(uint newReceiveQueueSize, uint newSendQueueSize)
         {
             Debug.Assert(Monitor.IsEntered(_requestQueue));
-            Interop.Rio.ResizeRequestQueue(_requestQueue, newReceiveQueueSize, newSendQueueSize);
+
+            while (true)
+            {
+                try
+                {
+                    Interop.Rio.ResizeRequestQueue(_requestQueue, newReceiveQueueSize, newSendQueueSize);
+                    break;
+                }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.NoBufferSpaceAvailable)
+                {
+                    _multiplexer.GrowCompletionQueue();
+                }
+            }
+
             _currentReceiveQueueSize = newReceiveQueueSize;
             _currentSendQueueSize = newSendQueueSize;
         }

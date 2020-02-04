@@ -15,8 +15,8 @@ namespace NclLab.Sockets
     public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>
     {
         private readonly RegisteredSocket _socket;
-        private Interop.Rio.RIO_BUF[] _buffers = new Interop.Rio.RIO_BUF[1];
-        private RegisteredMemoryManager[] _rioBuffers = new RegisteredMemoryManager[1];
+        private Interop.Rio.RIO_BUF[] _buffers;
+        private RegisteredMemoryManager _bufferManager, _endPointManager;
         private ManualResetValueTaskSourceCore<int> _valueTaskSource;
         private GCHandle _thisHandle, _buffersHandle;
 
@@ -24,36 +24,21 @@ namespace NclLab.Sockets
         {
             _socket = socket;
             _valueTaskSource.RunContinuationsAsynchronously = true;
+            _buffers = new Interop.Rio.RIO_BUF[socket.ProtocolType == ProtocolType.Udp ? 2 : 1];
         }
 
         public ValueTask<int> SendAsync(ReadOnlyMemory<byte> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GCHandle.ToIntPtr(_thisHandle));
-            CheckError(result);
-            return new ValueTask<int>(this, _valueTaskSource.Version);
-        }
-
-        public ValueTask<int> SendAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory)
-        {
-            Prepare(memory);
-            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), memory.Length, GCHandle.ToIntPtr(_thisHandle));
+            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
 
         public ValueTask<int> SendToAsync(ReadOnlyMemory<byte> memory, RegisteredEndPoint remoteEndPoint)
         {
-            Prepare(memory);
-            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), GCHandle.ToIntPtr(_thisHandle));
-            CheckError(result);
-            return new ValueTask<int>(this, _valueTaskSource.Version);
-        }
-
-        public ValueTask<int> SendToAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory, RegisteredEndPoint remoteEndPoint)
-        {
-            Prepare(memory);
-            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), GCHandle.ToIntPtr(_thisHandle));
+            Prepare(memory, remoteEndPoint);
+            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), GetEndPointAddress(), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -61,38 +46,22 @@ namespace NclLab.Sockets
         public ValueTask<int> ReceiveAsync(Memory<byte> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GCHandle.ToIntPtr(_thisHandle));
-            CheckError(result);
-            return new ValueTask<int>(this, _valueTaskSource.Version);
-        }
-
-        public ValueTask<int> ReceiveAsync(ReadOnlySpan<Memory<byte>> memory)
-        {
-            Prepare(memory);
-            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), memory.Length, GCHandle.ToIntPtr(_thisHandle));
+            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
 
         public ValueTask<int> ReceiveFromAsync(Memory<byte> memory, RegisteredEndPoint remoteEndPoint)
         {
-            Prepare(memory);
-            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), GCHandle.ToIntPtr(_thisHandle));
+            Prepare(memory, remoteEndPoint);
+            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), GetEndPointAddress(), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
 
-        public ValueTask<int> ReceiveFromAsync(ReadOnlySpan<Memory<byte>> memory, RegisteredEndPoint remoteEndPoint)
+        private IntPtr GetEndPointAddress()
         {
-            Prepare(memory);
-            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), GCHandle.ToIntPtr(_thisHandle));
-            CheckError(result);
-            return new ValueTask<int>(this, _valueTaskSource.Version);
-        }
-
-        private IntPtr GetEndPointAddress(int bufferCount)
-        {
-            return IntPtr.Add(_buffersHandle.AddrOfPinnedObject(), sizeof(Interop.Rio.RIO_BUF) * bufferCount);
+            return IntPtr.Add(_buffersHandle.AddrOfPinnedObject(), sizeof(Interop.Rio.RIO_BUF));
         }
 
         private void CheckError(SocketError error)
@@ -105,80 +74,29 @@ namespace NclLab.Sockets
 
         private void Prepare(ReadOnlyMemory<byte> buffer)
         {
-            SetBuffer(0, buffer);
+            _bufferManager = SetBuffer(ref _buffers[0], buffer);
             Pin();
         }
 
         private void Prepare(ReadOnlyMemory<byte> buffer, RegisteredEndPoint remoteEndPoint)
         {
-            EnsureBuffersCount(2);
-            SetBuffer(0, buffer);
-            SetBuffer(1, remoteEndPoint.Memory);
+            _bufferManager = SetBuffer(ref _buffers[0], buffer);
+            _endPointManager = SetBuffer(ref _buffers[1], remoteEndPoint.Memory);
             Pin();
         }
 
-        private void Prepare(ReadOnlySpan<Memory<byte>> buffers)
-        {
-            EnsureBuffersCount(buffers.Length);
-            for (int i = 0; i < buffers.Length; ++i)
-            {
-                SetBuffer(i, buffers[i]);
-            }
-            Pin();
-        }
-
-        private void Prepare(ReadOnlySpan<Memory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
-        {
-            EnsureBuffersCount(buffers.Length + 1);
-            for (int i = 0; i < buffers.Length; ++i)
-            {
-                SetBuffer(i, buffers[i]);
-            }
-            SetBuffer(buffers.Length, remoteEndPoint.Memory);
-            Pin();
-        }
-
-        private void Prepare(ReadOnlySpan<ReadOnlyMemory<byte>> buffers)
-        {
-            EnsureBuffersCount(buffers.Length);
-            for (int i = 0; i < buffers.Length; ++i)
-            {
-                SetBuffer(i, buffers[i]);
-            }
-            Pin();
-        }
-
-        private void Prepare(ReadOnlySpan<ReadOnlyMemory<byte>> buffers, RegisteredEndPoint remoteEndPoint)
-        {
-            EnsureBuffersCount(buffers.Length + 1);
-            for (int i = 0; i < buffers.Length; ++i)
-            {
-                SetBuffer(i, buffers[i]);
-            }
-            SetBuffer(buffers.Length, remoteEndPoint.Memory);
-            Pin();
-        }
-
-        private void EnsureBuffersCount(int bufferCount)
-        {
-            if (_buffers.Length < bufferCount)
-            {
-                _rioBuffers = new RegisteredMemoryManager[bufferCount];
-                _buffers = new Interop.Rio.RIO_BUF[bufferCount];
-            }
-        }
-
-        private void SetBuffer(int idx, ReadOnlyMemory<byte> buffer)
+        private RegisteredMemoryManager SetBuffer(ref Interop.Rio.RIO_BUF buf, ReadOnlyMemory<byte> buffer)
         {
             if (!MemoryMarshal.TryGetMemoryManager(buffer, out RegisteredMemoryManager manager, out int start, out int length))
             {
                 throw new Exception($"Buffers given to {nameof(RegisteredSocket)} must be obtained via a {nameof(RegisteredMemoryPool)}.");
             }
 
-            _buffers[idx].BufferId = manager.RioBufferId;
-            _buffers[idx].Offset = start;
-            _buffers[idx].Length = length;
-            _rioBuffers[idx] = manager;
+            buf.BufferId = manager.RioBufferId;
+            buf.Offset = start;
+            buf.Length = length;
+
+            return manager;
         }
 
         private void Pin()
@@ -199,10 +117,8 @@ namespace NclLab.Sockets
             _buffersHandle.Free();
             _thisHandle.Free();
 
-            for (int i = 0; i < _rioBuffers.Length; ++i)
-            {
-                _rioBuffers[i] = null;
-            }
+            _bufferManager = null;
+            _endPointManager = null;
         }
 
         private void Complete(int transferred)

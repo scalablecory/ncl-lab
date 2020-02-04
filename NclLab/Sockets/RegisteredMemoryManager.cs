@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.ComponentModel;
+using System.Threading;
 
 namespace NclLab.Sockets
 {
@@ -10,7 +11,7 @@ namespace NclLab.Sockets
     internal sealed unsafe class RegisteredMemoryManager : MemoryManager<byte>
     {
         private IntPtr _rioBuffer;
-        private void* _ptr;
+        private IntPtr _ptr;
         private int _len;
 
         public IntPtr RioBufferId => _rioBuffer;
@@ -23,18 +24,19 @@ namespace NclLab.Sockets
             size -= size % si.dwAllocationGranularity;
             minimumLength = (int)size;
 
-            _ptr = Interop.Kernel32.VirtualAlloc(null, new UIntPtr((uint)minimumLength), Interop.Kernel32.MEM_COMMIT | Interop.Kernel32.MEM_RESERVE, Interop.Kernel32.PAGE_READWRITE);
+            _ptr = Interop.Kernel32.VirtualAlloc(IntPtr.Zero, new UIntPtr((uint)minimumLength), Interop.Kernel32.MEM_COMMIT | Interop.Kernel32.MEM_RESERVE, Interop.Kernel32.PAGE_READWRITE);
             if (_ptr == null) throw new Win32Exception();
 
             _len = minimumLength;
 
             try
             {
-                _rioBuffer = Interop.Rio.RegisterBuffer(new IntPtr(_ptr), _len);
+                _rioBuffer = Interop.Rio.RegisterBuffer(_ptr, _len);
             }
             catch
             {
                 Interop.Kernel32.VirtualFree(_ptr, new UIntPtr((uint)_len), Interop.Kernel32.MEM_RELEASE);
+                _ptr = IntPtr.Zero;
                 throw;
             }
 
@@ -48,16 +50,17 @@ namespace NclLab.Sockets
 
         protected override void Dispose(bool disposing)
         {
-            if (_ptr != null)
+            IntPtr ptr = Interlocked.Exchange(ref _ptr, IntPtr.Zero);
+
+            if (ptr != null)
             {
                 Interop.Rio.DeregisterBuffer(_rioBuffer);
                 _rioBuffer = IntPtr.Zero;
 
-                if (!Interop.Kernel32.VirtualFree(_ptr, new UIntPtr((uint)_len), Interop.Kernel32.MEM_RELEASE))
+                if (!Interop.Kernel32.VirtualFree(ptr, UIntPtr.Zero, Interop.Kernel32.MEM_RELEASE))
                 {
                     throw new Win32Exception();
                 }
-                _ptr = null;
 
                 GC.RemoveMemoryPressure(_len);
             }
@@ -66,7 +69,7 @@ namespace NclLab.Sockets
         public override Span<byte> GetSpan()
         {
             if (_ptr == null) throw new ObjectDisposedException(nameof(RegisteredMemoryManager));
-            return new Span<byte>(_ptr, _len);
+            return new Span<byte>(_ptr.ToPointer(), _len);
         }
 
         public override MemoryHandle Pin(int elementIndex = 0)

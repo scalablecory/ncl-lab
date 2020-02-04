@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO.Pipelines;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -69,7 +70,7 @@ namespace NclLab.Kestrel
             try
             {
                 RegisteredOperationContext operationContext = _socket.CreateOperationContext();
-                var sendBuffers = new ReadOnlyMemory<byte>[1];
+                var sendBuffers = new Operation[1];
 
                 while (true)
                 {
@@ -81,35 +82,28 @@ namespace NclLab.Kestrel
                     }
 
                     ReadOnlySequence<byte> buffer = readResult.Buffer;
+                    SequencePosition next = buffer.Start, end = buffer.End;
+                    int sendCount = 0;
 
-                    if (!buffer.IsEmpty)
+                    while (buffer.TryGet(ref next, out ReadOnlyMemory<byte> segment))
                     {
-                        ValueTask<int> bytesSentTask;
-
-                        if (buffer.IsSingleSegment)
+                        if (sendCount == sendBuffers.Length)
                         {
-                            bytesSentTask = operationContext.SendAsync(buffer.First);
-                        }
-                        else
-                        {
-                            int idx = 0;
-                            foreach (ReadOnlyMemory<byte> segment in readResult.Buffer)
-                            {
-                                if (idx == sendBuffers.Length)
-                                {
-                                    Array.Resize(ref sendBuffers, sendBuffers.Length * 2);
-                                }
-
-                                sendBuffers[idx++] = segment;
-                            }
-
-                            bytesSentTask = operationContext.SendAsync(sendBuffers.AsSpan(0, idx));
+                            Array.Resize(ref sendBuffers, sendBuffers.Length * 2);
                         }
 
-                        int bytesSent = await bytesSentTask;
-                        _socketInput.AdvanceTo(buffer.GetPosition(bytesSent));
+                        RegisteredOperationContext ctx = sendBuffers[sendCount].Context ??= _socket.CreateOperationContext();
+                        sendBuffers[sendCount++].Task = ctx.SendAsync(segment);
                     }
-                    else if (readResult.IsCompleted)
+
+                    for (int i = 0; i < sendCount; ++i)
+                    {
+                        await sendBuffers[i].Task;
+                    }
+
+                    _socketInput.AdvanceTo(end);
+                    
+                    if (readResult.IsCompleted)
                     {
                         break;
                     }
@@ -177,6 +171,13 @@ namespace NclLab.Kestrel
 
             _socketOutput.Complete(Volatile.Read(ref _shutdownReason) ?? error);
             _cancellationTokenSource.Cancel();
+        }
+
+        [StructLayout(LayoutKind.Auto)]
+        struct Operation
+        {
+            public RegisteredOperationContext Context;
+            public ValueTask<int> Task;
         }
 
         private static bool IsConnectionResetError(SocketError errorCode)

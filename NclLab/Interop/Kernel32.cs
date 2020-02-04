@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace NclLab.Interop
 {
-    internal unsafe static class Kernel32
+    internal static class Kernel32
     {
         public const int ERROR_NOT_FOUND = 0x490;
         public const int MEM_COMMIT = 0x00001000;
@@ -12,10 +12,10 @@ namespace NclLab.Interop
         public const int PAGE_READWRITE = 0x04;
 
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
-        public static extern void* VirtualAlloc(void* lpAddress, UIntPtr dwSize, uint flAllocationType, uint flProtect);
+        public static extern IntPtr VirtualAlloc(IntPtr lpAddress, UIntPtr dwSize, uint flAllocationType, uint flProtect);
 
         [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
-        public static extern bool VirtualFree(void* lpAddress, UIntPtr dwSize, uint dwFreeType);
+        public static extern bool VirtualFree(IntPtr lpAddress, UIntPtr dwSize, uint dwFreeType);
 
         [DllImport("kernel32.dll", ExactSpelling =  true, SetLastError = true)]
         public static extern bool CancelIoEx(SafeHandle handle, IntPtr lpOverlapped);

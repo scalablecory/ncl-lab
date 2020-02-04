@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Net.Sockets;
 using System.Threading;
 
@@ -10,9 +11,10 @@ namespace NclLab.Sockets
     public sealed class RegisteredMultiplexer : IDisposable
     {
         private readonly EventWaitHandle _waitHandle;
-        private readonly RegisteredWaitHandle _registeredWaitHandle;
+        private readonly Thread _monitorThread;
         private readonly Interop.SafeRioCompletionQueueHandle _completionQueue;
         private uint _currentQueueSize = 4;
+        private volatile bool _disposing;
 
         public RegisteredMultiplexer()
         {
@@ -20,14 +22,15 @@ namespace NclLab.Sockets
 
             _waitHandle = new AutoResetEvent(initialState: false);
             _completionQueue = Interop.Rio.CreateCompletionQueue(_currentQueueSize, _waitHandle.SafeWaitHandle);
-            _registeredWaitHandle = ThreadPool.UnsafeRegisterWaitForSingleObject(_waitHandle,
-                (state, timedOut) => ((RegisteredMultiplexer)state).OnNotify(), this, millisecondsTimeOutInterval: -1, executeOnlyOnce: false);
-            Notify();
+            _monitorThread = new Thread(o => ((RegisteredMultiplexer)o).OnNotify());
+            _monitorThread.Start(this);
         }
 
         public void Dispose()
         {
-            _registeredWaitHandle.Unregister(_waitHandle);
+            _disposing = true;
+            _waitHandle.Set();
+            _monitorThread.Join();
             _completionQueue.Dispose();
             _waitHandle.Dispose();
         }
@@ -40,47 +43,62 @@ namespace NclLab.Sockets
                 {
                     try
                     {
-                        return Interop.Rio.CreateRequestQueue(socketHandle, _completionQueue, IntPtr.Zero, 1, 1, 1, 1);
+                        return Interop.Rio.CreateRequestQueue(socketHandle, _completionQueue, IntPtr.Zero, 1, 1);
                     }
                     catch (SocketException ex) when (ex.SocketErrorCode == SocketError.NoBufferSpaceAvailable)
                     {
-                        uint newQueueSize = _currentQueueSize * 2;
-                        Interop.Rio.ResizeCompletionQueue(_completionQueue, newQueueSize);
-                        _currentQueueSize = newQueueSize;
+                        GrowCompletionQueueUnlocked();
                     }
                 }
             }
         }
 
-        private void Notify()
+        internal void GrowCompletionQueue()
         {
             lock (_completionQueue)
             {
-                Interop.Rio.Notify(_completionQueue);
+                GrowCompletionQueueUnlocked();
             }
+        }
+
+        private void GrowCompletionQueueUnlocked()
+        {
+            Debug.Assert(Monitor.IsEntered(_completionQueue));
+            uint newQueueSize = checked(_currentQueueSize * 2);
+            Interop.Rio.ResizeCompletionQueue(_completionQueue, newQueueSize);
+            _currentQueueSize = newQueueSize;
         }
 
         private void OnNotify()
         {
             Span<Interop.Rio.RIORESULT> results = stackalloc Interop.Rio.RIORESULT[32];
-            int dequeued;
 
             do
             {
                 lock (_completionQueue)
                 {
-                    dequeued = Interop.Rio.DequeueCompletions(_completionQueue, results);
+                    Interop.Rio.Notify(_completionQueue);
                 }
 
-                for (int i = 0; i < dequeued; ++i)
+                _waitHandle.WaitOne();
+
+                int dequeued;
+
+                do
                 {
-                    ref Interop.Rio.RIORESULT result = ref results[i];
-                    RegisteredOperationContext.Complete(result.Status, result.BytesTransferred, new IntPtr(result.RequestContext));
-                }
-            }
-            while (dequeued != 0);
+                    lock (_completionQueue)
+                    {
+                        dequeued = Interop.Rio.DequeueCompletions(_completionQueue, results);
+                    }
 
-            Notify();
+                    for (int i = 0; i < dequeued; ++i)
+                    {
+                        ref Interop.Rio.RIORESULT result = ref results[i];
+                        RegisteredOperationContext.Complete(result.Status, result.BytesTransferred, new IntPtr(result.RequestContext));
+                    }
+                }
+                while (dequeued != 0);
+            } while (!_disposing);
         }
     }
 }

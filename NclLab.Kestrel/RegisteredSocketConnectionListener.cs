@@ -39,8 +39,6 @@ namespace NclLab.Kestrel
 
         public async ValueTask<ConnectionContext> AcceptAsync(CancellationToken cancellationToken = default)
         {
-            AddressFamily af = EndPoint.AddressFamily;
-
             while (true)
             {
                 try
