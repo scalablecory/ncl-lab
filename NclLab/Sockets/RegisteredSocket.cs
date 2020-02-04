@@ -14,9 +14,7 @@ namespace NclLab.Sockets
     /// </summary>
     public sealed class RegisteredSocket : IDisposable
     {
-        private static Func<Socket, ThreadPoolBoundHandle> s_GetOrAllocateThreadPoolBoundHandle;
         private static Func<SafeSocketHandle, AddressFamily, SocketType, ProtocolType, Socket> s_createRegisterableSocket;
-        internal readonly ThreadPoolBoundHandle _boundHandle;
         private readonly Socket _socket;
         private readonly Interop.SafeRioRequestQueueHandle _requestQueue;
         private uint _currentSendQueueSize = 1, _currentReceiveQueueSize = 1;
@@ -36,7 +34,6 @@ namespace NclLab.Sockets
 
             try
             {
-                _boundHandle = GetOrAllocateThreadPoolBoundHandle(socket);
                 _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
                 _socket = socket;
             }
@@ -53,7 +50,6 @@ namespace NclLab.Sockets
         /// <param name="socket">The socket to register. Must have been created using <see cref="CreateRegisterableSocket(AddressFamily, SocketType, ProtocolType)"/>.</param>
         internal RegisteredSocket(RegisteredMultiplexer multiplexer, Socket socket)
         {
-            _boundHandle = GetOrAllocateThreadPoolBoundHandle(socket);
             _requestQueue = multiplexer.RegisterSocket(socket.SafeHandle);
             _socket = socket;
         }
@@ -210,17 +206,6 @@ namespace NclLab.Sockets
 
                 return s_createRegisterableSocket(socketHandle, family, socketType, protocolType);
             }
-        }
-
-        private static ThreadPoolBoundHandle GetOrAllocateThreadPoolBoundHandle(Socket socket)
-        {
-            if (s_GetOrAllocateThreadPoolBoundHandle == null)
-            {
-                MethodInfo method = typeof(Socket).GetMethod("GetOrAllocateThreadPoolBoundHandle", BindingFlags.Instance | BindingFlags.NonPublic);
-                s_GetOrAllocateThreadPoolBoundHandle = (Func<Socket, ThreadPoolBoundHandle>)Delegate.CreateDelegate(typeof(Func<Socket, ThreadPoolBoundHandle>), method);
-            }
-
-            return s_GetOrAllocateThreadPoolBoundHandle(socket);
         }
     }
 }

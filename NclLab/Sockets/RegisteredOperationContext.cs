@@ -12,35 +12,24 @@ namespace NclLab.Sockets
     /// <summary>
     /// Context for an async operation. Should be reused across multiple I/Os. Not concurrently.
     /// </summary>
-    public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>, IDisposable
+    public unsafe sealed class RegisteredOperationContext : IValueTaskSource<int>
     {
         private readonly RegisteredSocket _socket;
         private Interop.Rio.RIO_BUF[] _buffers = new Interop.Rio.RIO_BUF[1];
         private RegisteredMemoryManager[] _rioBuffers = new RegisteredMemoryManager[1];
         private ManualResetValueTaskSourceCore<int> _valueTaskSource;
-        private GCHandle _buffersHandle;
-
-        // Used only to pin this context, as GCHandle can't pin a non-blittable type; RIO does not actually use overlapped.
-        private readonly StrongBox<RegisteredOperationContext> _thisRef = new StrongBox<RegisteredOperationContext>();
-        private readonly PreAllocatedOverlapped _preallocatedOverlapped;
-        private NativeOverlapped* _overlapped;
+        private GCHandle _thisHandle, _buffersHandle;
 
         internal RegisteredOperationContext(RegisteredSocket socket)
         {
             _socket = socket;
-            _preallocatedOverlapped = new PreAllocatedOverlapped(delegate { }, _thisRef, null);
             _valueTaskSource.RunContinuationsAsynchronously = true;
-        }
-
-        public void Dispose()
-        {
-            _preallocatedOverlapped.Dispose();
         }
 
         public ValueTask<int> SendAsync(ReadOnlyMemory<byte> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, new IntPtr(_overlapped));
+            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -48,7 +37,7 @@ namespace NclLab.Sockets
         public ValueTask<int> SendAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), memory.Length, new IntPtr(_overlapped));
+            SocketError result = _socket.StartSend(_buffersHandle.AddrOfPinnedObject(), memory.Length, GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -56,7 +45,7 @@ namespace NclLab.Sockets
         public ValueTask<int> SendToAsync(ReadOnlyMemory<byte> memory, RegisteredEndPoint remoteEndPoint)
         {
             Prepare(memory);
-            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), new IntPtr(_overlapped));
+            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -64,7 +53,7 @@ namespace NclLab.Sockets
         public ValueTask<int> SendToAsync(ReadOnlySpan<ReadOnlyMemory<byte>> memory, RegisteredEndPoint remoteEndPoint)
         {
             Prepare(memory);
-            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), new IntPtr(_overlapped));
+            SocketError result = _socket.StartSendTo(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -72,7 +61,7 @@ namespace NclLab.Sockets
         public ValueTask<int> ReceiveAsync(Memory<byte> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, new IntPtr(_overlapped));
+            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -80,7 +69,7 @@ namespace NclLab.Sockets
         public ValueTask<int> ReceiveAsync(ReadOnlySpan<Memory<byte>> memory)
         {
             Prepare(memory);
-            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), memory.Length, new IntPtr(_overlapped));
+            SocketError result = _socket.StartReceive(_buffersHandle.AddrOfPinnedObject(), memory.Length, GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -88,7 +77,7 @@ namespace NclLab.Sockets
         public ValueTask<int> ReceiveFromAsync(Memory<byte> memory, RegisteredEndPoint remoteEndPoint)
         {
             Prepare(memory);
-            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), new IntPtr(_overlapped));
+            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), bufferCount: 1, GetEndPointAddress(bufferCount: 1), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -96,7 +85,7 @@ namespace NclLab.Sockets
         public ValueTask<int> ReceiveFromAsync(ReadOnlySpan<Memory<byte>> memory, RegisteredEndPoint remoteEndPoint)
         {
             Prepare(memory);
-            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), new IntPtr(_overlapped));
+            SocketError result = _socket.StartReceiveFrom(_buffersHandle.AddrOfPinnedObject(), memory.Length, GetEndPointAddress(memory.Length), GCHandle.ToIntPtr(_thisHandle));
             CheckError(result);
             return new ValueTask<int>(this, _valueTaskSource.Version);
         }
@@ -194,22 +183,21 @@ namespace NclLab.Sockets
 
         private void Pin()
         {
-            _buffersHandle = GCHandle.Alloc(_buffers, GCHandleType.Pinned);
-            _valueTaskSource.Reset();
+            Debug.Assert(_buffersHandle.IsAllocated == false);
+            Debug.Assert(_thisHandle.IsAllocated == false);
 
-            _thisRef.Value = this;
-            _overlapped = _socket._boundHandle.AllocateNativeOverlapped(_preallocatedOverlapped);
+            _valueTaskSource.Reset();
+            _buffersHandle = GCHandle.Alloc(_buffers, GCHandleType.Pinned);
+            _thisHandle = GCHandle.Alloc(this, GCHandleType.Normal);
         }
 
         private void UnPin()
         {
-            Debug.Assert(_overlapped != null);
+            Debug.Assert(_buffersHandle.IsAllocated);
+            Debug.Assert(_thisHandle.IsAllocated);
 
             _buffersHandle.Free();
-
-            _socket._boundHandle.FreeNativeOverlapped(_overlapped);
-            _overlapped = null;
-            _thisRef.Value = null;
+            _thisHandle.Free();
 
             for (int i = 0; i < _rioBuffers.Length; ++i)
             {
@@ -231,9 +219,7 @@ namespace NclLab.Sockets
 
         internal static unsafe void Complete(int errorCode, int transferred, IntPtr thisPtr)
         {
-            var nativeOverlapped = (NativeOverlapped*)thisPtr.ToPointer();
-            var box = (StrongBox<RegisteredOperationContext>)ThreadPoolBoundHandle.GetNativeOverlappedState(nativeOverlapped);
-            RegisteredOperationContext @this = box.Value;
+            var @this = (RegisteredOperationContext)GCHandle.FromIntPtr(thisPtr).Target;
 
             if (errorCode == (int)SocketError.Success)
             {

@@ -31,10 +31,10 @@ namespace RegisteredKestrelSample
         HttpClient _client;
         IWebHost _webHost;
 
-        [Params(100, 1000)]
+        [Params(500)]
         public int Concurrency;
 
-        [Params(100000)]
+        [Params(50000)]
         public int RequestCount;
 
         [Params(false, true)]
@@ -158,12 +158,16 @@ namespace RegisteredKestrelSample
 
         public static void Main(string[] args)
         {
-            var p = new Program();
+            //Console.WriteLine("Press any key to continue...");
+            //Console.ReadKey();
+
+            //var p = new Program();
 
             //p.Registered = true;
-            //p.RequestCount = 100;
+            //p.RequestCount = 10000;
             //p.Concurrency = 1;
             //p.Setup();
+            ////p.PostOne().GetAwaiter().GetResult();
             //p.Post().GetAwaiter().GetResult();
             //p.Cleanup();
 

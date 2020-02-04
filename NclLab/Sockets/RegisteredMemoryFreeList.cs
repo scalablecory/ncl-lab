@@ -85,7 +85,7 @@ namespace NclLab.Sockets
 
             public Memory<byte> Memory { get; }
 
-            public OwnedMemory(Memory<Byte> memory)
+            public OwnedMemory(Memory<byte> memory)
             {
                 Memory = memory;
             }
