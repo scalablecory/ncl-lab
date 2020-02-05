@@ -20,6 +20,8 @@ namespace NclLab.Sockets
         private ManualResetValueTaskSourceCore<int> _valueTaskSource;
         private GCHandle _thisHandle, _buffersHandle;
 
+        public RegisteredSocket Socket => _socket;
+
         internal RegisteredOperationContext(RegisteredSocket socket)
         {
             _socket = socket;

@@ -41,11 +41,12 @@ namespace NclLab.Sockets
 
             readonly object _receiveSyncObj = new object();
             ReadOperation _receiveStart, _receiveEnd;
-            int _receiveEndAvailable;
-            long _totalReceiveBytesAvailable;
+            int _receiveStartOffset, _receiveEndAvailable;
+            long _totalReceiveBytesAvailable, _unexaminedReceiveBytesLength;
             readonly int _maxReceiveBytesAvailable, _resumeReceiveBytesAvailable, _receiveSegmentLength;
             readonly ResettableValueTaskSource _pauseReceiveTaskSource = new ResettableValueTaskSource();
             readonly ResettableValueTaskSource _receiveDataAvailableTaskSource = new ResettableValueTaskSource();
+            bool _isPaused, _readerIsWaiting;
 
             public State(RegisteredMemoryPool pool, RegisteredSocket socket, long? maxSendBufferSize, long? maxReceiveBufferSize)
             {
@@ -220,10 +221,11 @@ namespace NclLab.Sockets
                     {
                         _receiveEndAvailable += bytesReceived;
                         _totalReceiveBytesAvailable += bytesReceived;
+                        _unexaminedReceiveBytesLength += bytesReceived;
 
                         if (_receiveEndAvailable == _receiveEnd.Memory.Length)
                         {
-                            pause = CompleteFullSegmentReceive();
+                            _isPaused = pause = CompleteFullSegmentReceiveUnlocked();
                         }
                     }
 
@@ -231,8 +233,11 @@ namespace NclLab.Sockets
                     {
                         await _pauseReceiveTaskSource.Task;
 
-                        pause = CompleteFullSegmentReceive();
-                        Debug.Assert(pause == false);
+                        lock (_receiveSyncObj)
+                        {
+                            pause = CompleteFullSegmentReceiveUnlocked();
+                            Debug.Assert(pause == false);
+                        }
                     }
 
                     Debug.Assert(_receiveEndAvailable != _receiveEnd.Memory.Length);
@@ -241,8 +246,10 @@ namespace NclLab.Sockets
             }
 
             /// <returns>If the reader should pause, true.</returns>
-            private bool CompleteFullSegmentReceive()
+            private bool CompleteFullSegmentReceiveUnlocked()
             {
+                Debug.Assert(Monitor.IsEntered(_receiveSyncObj));
+
                 // The current receive segment is full.
 
                 if (_receiveEnd.Next != null)
@@ -250,7 +257,7 @@ namespace NclLab.Sockets
                     // There's a segment waiting already; start receiving to it.
                     _receiveEnd = (ReadOperation)_receiveEnd.Next;
                 }
-                else if (_totalReceiveBytesAvailable >= _maxReceiveBytesAvailable)
+                else if (_unexaminedReceiveBytesLength >= _maxReceiveBytesAvailable)
                 {
                     // We've exceeded our stop value: wait for the pause task to resume reading.
                     _pauseReceiveTaskSource.Reset();
@@ -269,12 +276,112 @@ namespace NclLab.Sockets
 
             public async ValueTask<ReadResult> ReaderReadAsync()
             {
-                throw new NotImplementedException();
+                ReadResult result;
+
+                lock (_receiveSyncObj)
+                {
+                    if (ReaderTryReadUnlocked(out result))
+                    {
+                        return result;
+                    }
+
+                    _receiveDataAvailableTaskSource.Reset();
+                    _readerIsWaiting = true;
+                }
+
+                await _receiveDataAvailableTaskSource.Task;
+
+                bool hasResult = ReaderTryRead(out result);
+                Debug.Assert(hasResult == true);
+
+                return result;
             }
 
             public bool ReaderTryRead(out ReadResult result)
             {
-                throw new NotImplementedException();
+                lock (_receiveSyncObj)
+                {
+                    return ReaderTryReadUnlocked(out result);
+                }
+            }
+
+            private bool ReaderTryReadUnlocked(out ReadResult result)
+            {
+                if (_totalReceiveBytesAvailable != 0)
+                {
+                    var sequence = new ReadOnlySequence<byte>(_receiveStart, _receiveStartOffset, _receiveEnd, _receiveEndAvailable);
+                    result = new ReadResult(sequence, isCanceled: false, isCompleted: false);
+                    return true;
+                }
+
+                result = default;
+                return false;
+            }
+
+            public void Advance(SequencePosition consumed)
+            {
+                if (!(consumed.GetObject() is ReadOperation segment) || segment.Context.Socket != _socket)
+                {
+                    throw new ArgumentException("Sequence position does not belong to this pipe.");
+                }
+
+                int segmentOffset = consumed.GetInteger();
+
+                Advance(segment, segmentOffset, segment, segmentOffset);
+            }
+
+            public void Advance(SequencePosition consumed, SequencePosition examined)
+            {
+                if (!(consumed.GetObject() is ReadOperation consumedSegment) || consumedSegment.Context.Socket != _socket
+                    || !(examined.GetObject() is ReadOperation examinedSegment) || examinedSegment.Context.Socket != _socket)
+                {
+                    throw new ArgumentException("Sequence position does not belong to this pipe.");
+                }
+
+                Advance(consumedSegment, consumedOffset: consumed.GetInteger(), examinedSegment, examinedOffset: examined.GetInteger());
+            }
+
+            private void Advance(ReadOperation consumedSegment, int consumedOffset, ReadOperation examinedSegment, int examinedOffset)
+            {
+                lock (_receiveSyncObj)
+                {
+                    ReadOperation startSegment;
+                    while ((startSegment = _receiveStart) != consumedSegment)
+                    {
+                        int startSegmentRemaining = startSegment.Memory.Length - _receiveStartOffset;
+                        _totalReceiveBytesAvailable -= startSegmentRemaining;
+                        _unexaminedReceiveBytesLength -= startSegmentRemaining;
+
+                        _receiveStartOffset = 0;
+                        _receiveStart = (ReadOperation)startSegment.Next;
+                        _receiveEnd.SetNext(startSegment);
+                    }
+
+                    if (_receiveStartOffset != consumedOffset)
+                    {
+                        int remainingConsumed = consumedOffset - _receiveStartOffset;
+                        _totalReceiveBytesAvailable -= remainingConsumed;
+                        _unexaminedReceiveBytesLength -= remainingConsumed;
+                        _receiveStartOffset = consumedOffset;
+                    }
+
+                    long examinedTotal = 0;
+
+                    while (startSegment != examinedSegment)
+                    {
+                        examinedTotal += startSegment == _receiveStart ? startSegment.Memory.Length - _receiveStartOffset : startSegment.Memory.Length;
+                        startSegment = (ReadOperation)startSegment.Next;
+                    }
+
+                    // bug here if end == start.
+                    examinedOffset += (startSegment == _receiveEnd ? _receiveEndAvailable : startSegment.Memory.Length) - examinedOffset;
+
+                    if (_isPaused)
+                    {
+                        _isPaused = false;
+                        _pauseReceiveTaskSource.SetResult();
+                    }
+                }
             }
 
             private void Shutdown(Exception ex)
@@ -349,10 +456,7 @@ namespace NclLab.Sockets
 
             public override ValueTask<ReadResult> ReadAsync(CancellationToken cancellationToken = default) => _state.ReaderReadAsync();
 
-            public override bool TryRead(out ReadResult result)
-            {
-                throw new NotImplementedException();
-            }
+            public override bool TryRead(out ReadResult result) => _state.ReaderTryRead(out result);
         }
 
         sealed class ResettableValueTaskSource : IValueTaskSource
